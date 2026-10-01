@@ -29,6 +29,7 @@ Bạn **KHÔNG** làm các việc sau: chọn ngưỡng pass/fail, chấm trên 
 | GPU | `<<vd. 2× T4 16 GB (Compute Capability 7.5: không có bf16, không dùng vLLM)>>` |
 | Ngân sách GPU cho toàn bộ nhiệm vụ | `<<vd. 20 giờ GPU>>` |
 | Thời lượng tối đa một phiên | `<<vd. 12 giờ>>` |
+| Phiên Kaggle hiện tại bắt đầu lúc | `<<vd. 2026-10-02 08:00>>` (phiên tối đa 12 giờ, hết giờ là mất `/kaggle/working`) |
 | Nhóm tài liệu dài | `syn_longtable,syn_longtext` |
 | Nhóm thường (mọi nhóm trừ nhóm dài) | `<<chép từ kết quả ocrbench validate, phân cách bằng dấu phẩy>>` |
 
@@ -54,6 +55,8 @@ Cột "Tool chặn" cho biết tool đã tự chặn hoặc tự phát hiện vi
 | L14 | **PHẢI** ghi nhật ký (mục 8) ngay sau **mỗi** lệnh `ocrbench run`, trước khi chạy lệnh tiếp theo. | Không |
 | L15 | **PHẢI** cộng dồn giờ GPU đã dùng vào nhật ký. Khi tổng đạt **80% ngân sách**: **DỪNG và hỏi**. | Không |
 | L16 | **CẤM** giảm `max_new_tokens`, và **CẤM** đổi sang `dtype: float32` để chữa lỗi hết bộ nhớ. | Không |
+| L17 | **PHẢI** chạy mọi lệnh `ocrbench run` bên trong phiên tmux `bench` (`tmux new -s bench`, hoặc `tmux attach -t bench` nếu đã có). **CẤM** chạy `ocrbench run` trực tiếp trong phiên SSH. | Không |
+| L18 | **CẤM** bắt đầu lệnh `ocrbench run` mới nếu phiên Kaggle còn **dưới 1 giờ** (tính từ giờ bắt đầu ở mục 2). Khi còn dưới 1 giờ: dừng sau lệnh đang chạy, cập nhật nhật ký, rồi **DỪNG và hỏi** để con người kéo kết quả về. | Không |
 
 ## 4. Quy trình
 
@@ -299,7 +302,8 @@ Các trường hợp phải dừng:
 5. Cần token, quyền tải model, hoặc cần cài thứ bị cấm ở L13.
 6. `ocrbench decide` cho kết quả `(không có)` ở bất kỳ nhóm nào.
 7. Báo cáo có dòng `⚠ CẢNH BÁO: dữ liệu đã thay đổi`.
-8. Muốn làm bất kỳ việc gì file này không nói tới.
+8. Phiên Kaggle còn dưới 1 giờ (L18).
+9. Muốn làm bất kỳ việc gì file này không nói tới.
 
 ## 10. Mẫu `FINAL_REPORT.md`
 

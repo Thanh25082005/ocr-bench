@@ -163,6 +163,39 @@ uv pip install -p /kaggle/working/venvs/surya/bin/python surya-ocr -e /kaggle/wo
   của lần trước làm input rồi copy thư mục `runs` về `/kaggle/working`; tool sẽ tự chạy tiếp phần còn thiếu.
 - Dữ liệu tải lên Kaggle là tải lên dịch vụ của bên thứ ba. Cần kiểm tra lại cam kết bảo mật với bên cung cấp dữ liệu.
 
+## 5b. Chạy trên Kaggle qua SSH
+
+Kaggle không có SSH chính thức. Anh tự mở kết nối SSH vào notebook (qua tunnel); cách này có thể bị Kaggle chặn,
+và rủi ro với tài khoản do anh tự cân nhắc. Khi đã SSH vào được:
+
+```bash
+# Trên máy Kaggle (repo private nên cần token chỉ-đọc):
+curl -sL -H "Authorization: token <TOKEN>" \
+  https://raw.githubusercontent.com/khanhkhmt/ocr-bench/main/scripts/kaggle/setup.sh -o setup.sh
+GITHUB_TOKEN=<TOKEN> BUILD_TESTSET=0 bash setup.sh
+```
+
+```bash
+# Trên máy của anh: đưa bộ test đã dựng sẵn lên (hoặc bỏ BUILD_TESTSET=0 ở trên để dựng lại trên Kaggle)
+bash scripts/kaggle/push_testset.sh <ssh-host>
+```
+
+```bash
+# Trên Kaggle: mọi lệnh chạy lâu đặt trong tmux, để mất SSH vẫn chạy tiếp
+tmux new -s bench
+ocrbench run --config /kaggle/working/config.yaml --per-category 1 --gpus 0,1
+```
+
+**Phiên Kaggle tối đa 12 giờ; hết phiên là `/kaggle/working` bị xóa.** Vì vậy:
+
+| Khi nào | Lệnh (chạy trên máy của anh) |
+|---|---|
+| Trong lúc chạy, định kỳ (vd. 30 phút một lần) | `bash scripts/kaggle/pull_results.sh <ssh-host>` → lưu vào `kaggle_results/` |
+| Mở phiên Kaggle mới, sau khi chạy lại `setup.sh` | `bash scripts/kaggle/push_results.sh <ssh-host>`, rồi chạy lại đúng lệnh `ocrbench run` cũ: tool bỏ qua mẫu đã có |
+
+Hai máy có cùng **dấu vân tay dữ liệu** (dòng thứ hai của `ocrbench validate`) nghĩa là cùng một bộ test, và kết
+quả cũ dùng tiếp được.
+
 ## 6. Giao cho agent chạy
 
 `AGENT_PROMPT.md` là prompt hướng dẫn agent xoay model theo vòng loại: chạy thử → sàng lọc trên tập con →

@@ -13,7 +13,7 @@ import os
 import sys
 
 from .config import load_config
-from .dataset import load_manifest, make_manifest, summarize
+from .dataset import fingerprint, load_manifest, make_manifest, summarize
 
 
 def _split_arg(a) -> str:
@@ -54,7 +54,8 @@ def cmd_validate(a):
     cfg = load_config(a.config)
     items = load_manifest(cfg.dataset)
     missing = [it for it in items if not all(p.exists() for p in it.images)]
-    print(f"Manifest: {cfg.dataset}\n")
+    print(f"Manifest: {cfg.dataset}")
+    print(f"Dấu vân tay dữ liệu: {fingerprint(items)}  (hai máy có cùng dấu vân tay = cùng một bộ test)\n")
     print(summarize(items))
     print()
     if missing:

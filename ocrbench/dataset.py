@@ -163,11 +163,13 @@ def _check_doc_leakage(items: list[Item]) -> None:
 
 
 def fingerprint(items: list[Item]) -> str:
-    """Dấu vân tay của bộ dữ liệu (id, nhóm, split, đáp án, tên + dung lượng ảnh).
-    Sửa bất kỳ đáp án / ảnh / cách chia dev-holdout nào cũng làm dấu vân tay đổi."""
+    """Dấu vân tay của bộ dữ liệu (id, nhóm, split, đáp án, tên ảnh).
+    Sửa bất kỳ đáp án / cách chia dev-holdout / danh sách mẫu nào cũng làm dấu vân tay đổi.
+    Không tính nội dung byte của ảnh: ảnh dựng bằng Chromium có thể lệch vài byte giữa hai phiên bản
+    trình duyệt dù nội dung như nhau, nên hai máy dựng cùng một bộ test vẫn có cùng dấu vân tay."""
     h = hashlib.sha256()
     for it in sorted(items, key=lambda x: x.id):
-        imgs = ",".join(f"{p.name}:{p.stat().st_size if p.exists() else -1}" for p in it.images)
+        imgs = ",".join(p.name for p in it.images)
         gt_hash = hashlib.sha256(it.gt.encode("utf-8")).hexdigest()
         h.update(f"{it.id}\t{it.category}\t{it.split}\t{it.gt_type}\t{gt_hash}\t{imgs}\n".encode("utf-8"))
     return h.hexdigest()[:16]
