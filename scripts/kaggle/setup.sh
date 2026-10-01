@@ -52,14 +52,14 @@ git -C "$CODE" log --oneline -1
 step "Thư viện"
 command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux >/dev/null)
 command -v tesseract >/dev/null || (apt-get update -qq && apt-get install -y -qq tesseract-ocr tesseract-ocr-ara >/dev/null)
-pip install -q -e "$CODE[teds,hf,tesseract,easyocr,testset]"
+python -m pip install -q -e "$CODE[teds,hf,tesseract,easyocr,testset]"
 python -c "import torch, transformers; print('torch', torch.__version__, '| transformers', transformers.__version__, '| CUDA', torch.cuda.is_available())"
 
 step "Bộ test"
 if [ -f "$DATA/manifest.jsonl" ]; then
   echo "Đã có $DATA/manifest.jsonl"
 elif [ "$TESTSET" = "drive" ]; then
-  pip install -q gdown
+  python -m pip install -q gdown
   python "$CODE/scripts/get_testset.py" --out "$DATA" || {
     echo "Tải chưa xong. Chạy lại: python $CODE/scripts/get_testset.py --out $DATA"; exit 1; }
 elif [ "$TESTSET" = "build" ]; then
