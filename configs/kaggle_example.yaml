@@ -1,0 +1,145 @@
+# Config mẫu cho Kaggle (GPU T4 ×2, mỗi card 16 GB).
+# Đường dẫn tương đối tính từ thư mục chứa file này.
+#
+# Bật/tắt model bằng `enabled`, hoặc chọn khi chạy: ocrbench run --config ... --models a,b
+# Mỗi model chạy trong tiến trình riêng; với --gpus 0,1 hai model chạy song song.
+#
+# ⚠ Các model dưới đây em mới kiểm tra tên + prompt theo trang Hugging Face của chúng,
+#   CHƯA chạy thử trên T4. Lần đầu nên chạy --limit 5 để phát hiện lỗi cấu hình sớm.
+
+dataset: /kaggle/input/YOUR-DATASET/manifest.jsonl
+output_dir: /kaggle/working/runs
+
+# Quy tắc chuẩn hóa áp dụng cho CẢ đáp án lẫn kết quả model trước khi tính CER "norm".
+# Đổi ở đây rồi chạy `ocrbench score` là chấm lại, không cần chạy lại model.
+normalization:
+  nfkc: true
+  strip_markdown: true
+  strip_tatweel: true
+  strip_diacritics: true   # bỏ tashkeel
+  unify_alef: false        # true: أ إ آ -> ا
+  unify_yeh: false         # true: ى -> ي
+  unify_digits: true       # ٠١٢ -> 012
+  unify_punct: false       # true: ، ؛ ؟ -> , ; ?
+  lowercase: false
+
+# Tài liệu dài (syn_longtable / syn_longtext, 1–3 trang): VLM nhận mọi trang trong MỘT lần gọi
+# (`multi_page: joint`, mặc định). Cần `max_new_tokens` đủ lớn (bảng 3 trang ≈ 6.000–9.000 token) và
+# giới hạn độ phân giải ảnh (`processor_kwargs: {max_pixels: ...}` hoặc `max_image_side`) để không hết VRAM.
+# Mẫu bị cắt do hết token được gắn cờ `hit_max_tokens` trong báo cáo.
+
+models:
+  # ---------- OCR truyền thống: nhanh, nhẹ ----------
+  - name: tesseract
+    adapter: tesseract
+    params: {lang: ara+eng, psm: 3}
+
+  - name: paddleocr_ar
+    adapter: paddleocr
+    params:
+      lang: ar
+      device: gpu
+      engine: transformers   # không cần cài paddlepaddle-gpu
+
+  - name: easyocr
+    adapter: easyocr
+    params: {langs: [ar, en]}
+
+  # ---------- VLM chuyên tài liệu ----------
+  - name: paddleocr_vl
+    adapter: paddleocr_vl
+    params: {engine: transformers}
+
+  - name: baseer
+    adapter: hf_vlm
+    params:
+      model_id: AbdoTarek/Baseer-OCR-V1.0          # Qwen2-VL-2B, ~4.4 GB fp16
+      system_prompt: "You are a helpful assistant."
+      prompt: |-
+        Extract ALL visible text from the document image.
+
+        Return the result strictly as JSON with this structure:
+
+        {
+         "subject": "",
+         "keywords": [],
+         "full_text": ""
+        }
+
+        Rules:
+        - Do not repeat lines.
+        - Preserve original order of text.
+        - Do not add explanations.
+      json_field: full_text
+      max_new_tokens: 2048
+
+  - name: qari_0_4
+    adapter: hf_vlm
+    params:
+      model_id: Qwen/Qwen3-VL-4B-Instruct          # model gốc
+      adapter_id: YasserSami/Qari-OCR-0.4.0-VL-4B-Instruct   # LoRA tiếng Ả Rập
+      processor_id: YasserSami/Qari-OCR-0.4.0-VL-4B-Instruct
+      prompt: "Free OCR."
+      max_new_tokens: 2048
+
+  - name: sherif_handwriting
+    adapter: hf_vlm
+    params:
+      model_id: sherif1313/Arabic-English-handwritten-OCR-v3   # Qwen2.5-VL-3B, chữ viết tay Ả Rập-Anh
+      prompt: "ارجو استخراج النص العربي كاملاً من هذه الصورة من البداية الى النهاية بدون اي اختصار ودون ذيادة او حذف. اقرأ كل المحتوى النصي الموجود في الصورة:"
+      max_new_tokens: 1024
+
+  # amad-vlm6: 8,3 tỉ tham số, ~16,6 GB ở fp16 -> không vừa 1 card T4.
+  # Cách 1: chia trên 2 GPU (giữ nguyên chất lượng, chiếm cả 2 card).
+  - name: amad_vlm6
+    adapter: hf_vlm
+    gpus: 2
+    params:
+      model_id: amad-iq/amad-vlm6
+      prompt: "Extract the text in the image. Give me the final text, nothing else."
+      max_new_tokens: 4096
+      generation_kwargs: {repetition_penalty: 1.05}
+  # Cách 2: lượng tử hóa 4-bit cho vừa 1 GPU. So với cách 1 để biết nén mất bao nhiêu độ chính xác.
+  - name: amad_vlm6_4bit
+    adapter: hf_vlm
+    params:
+      model_id: amad-iq/amad-vlm6
+      quantization: 4bit
+      prompt: "Extract the text in the image. Give me the final text, nothing else."
+      max_new_tokens: 4096
+      generation_kwargs: {repetition_penalty: 1.05}
+
+  # ---------- Tắt sẵn: cần môi trường riêng / chưa chắc chạy trên T4 ----------
+  - name: hunyuan_ocr
+    enabled: false   # license riêng của Tencent; repo khuyên CUDA 13 + transformers mới
+    adapter: hf_vlm
+    params:
+      model_id: tencent/HunyuanOCR
+      model_class: HunYuanVLForConditionalGeneration
+      trust_remote_code: true
+      input_mode: template
+      processor_kwargs: {use_fast: false}
+      prompt: "提取文档图片中正文的所有信息用markdown格式表示，其中页眉、页脚部分忽略，表格用html格式表达，文档中公式用latex格式表示，按照阅读顺序组织进行解析。"
+      max_new_tokens: 4096
+
+  - name: surya
+    enabled: false   # surya ghim phiên bản transformers riêng -> dùng venv riêng (xem README)
+    adapter: surya
+    python: /kaggle/working/venvs/surya/bin/python
+
+  # Model phục vụ qua server tương thích OpenAI (vLLM, llama.cpp...). vLLM cần GPU CC >= 8.0, không chạy tốt trên T4.
+  - name: my_api_model
+    enabled: false
+    adapter: openai_api
+    params:
+      base_url: http://127.0.0.1:8000/v1
+      model: my-model
+      prompt: "Extract all text in the image. Return only the text."
+
+  # Model có script riêng (vd. code của một repo GitHub): mỗi ảnh chạy một lệnh, stdout là kết quả.
+  - name: my_script
+    enabled: false
+    adapter: command
+    params:
+      cmd: "python /kaggle/working/my_repo/infer.py --image {image}"
+      timeout: 300

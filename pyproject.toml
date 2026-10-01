@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ocrbench"
+version = "0.1.0"
+description = "Benchmark nhiều model OCR (tiếng Anh + tiếng Ả Rập, bảng, chữ viết tay) trên cùng một bộ dữ liệu"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6",
+    "rapidfuzz>=3",
+    "pillow>=10",
+]
+
+[project.optional-dependencies]
+teds = ["apted>=1.0.3", "lxml>=5"]
+hf = ["torch", "transformers>=4.49", "accelerate", "peft", "bitsandbytes"]
+tesseract = ["pytesseract"]
+easyocr = ["easyocr"]
+paddle = ["paddleocr>=3.3"]
+surya = ["surya-ocr"]
+api = ["requests"]
+testset = ["datasets>=3", "playwright", "numpy", "lxml>=5"]
+dev = ["pytest", "apted>=1.0.3", "lxml>=5"]
+
+[project.scripts]
+ocrbench = "ocrbench.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ocrbench*"]

@@ -1,0 +1,208 @@
+"""Dòng lệnh `ocrbench`.
+
+    ocrbench make-manifest DATA_DIR -o data/manifest.jsonl     # tạo manifest từ thư mục
+    ocrbench validate --config config.yaml                      # kiểm tra dữ liệu + config
+    ocrbench run --config config.yaml --gpus 0,1                # chạy các model, rồi chấm điểm
+    ocrbench score --config config.yaml                         # chỉ chấm lại + tạo báo cáo
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+
+from .config import load_config
+from .dataset import load_manifest, make_manifest, summarize
+
+
+def _split_arg(a) -> str:
+    if a.split == "holdout" and not a.confirm_holdout:
+        sys.exit(
+            "Từ chối chạy trên holdout. Holdout chỉ dùng để chấm lần cuối, sau khi đã chốt model và cấu hình.\n"
+            "Nếu đúng là lần chấm cuối, thêm --confirm-holdout."
+        )
+    return a.split
+
+
+def _csv(s):
+    return [x.strip() for x in s.split(",") if x.strip()] if s else None
+
+
+def cmd_make_manifest(a):
+    recs = make_manifest(a.data_dir, a.output, holdout_ratio=a.holdout_ratio, seed=a.seed, doc_sep=a.doc_sep)
+    print(f"Đã ghi {len(recs)} mẫu vào {a.output}\n")
+    print(summarize(load_manifest(a.output)))
+
+
+def cmd_build_testset(a):
+    from .testset.build import build_testset
+
+    recs = build_testset(
+        a.output, public_n=a.public_n, synth_n=a.synth_n, holdout_ratio=a.holdout_ratio, seed=a.seed,
+        public=not a.no_public, synth=not a.no_synth, sources=_csv(a.sources), categories=_csv(a.categories),
+        scale=a.scale,
+    )
+    print(f"\nĐã ghi {len(recs)} mẫu vào {a.output}/manifest.jsonl (mô tả: {a.output}/DATASET_CARD.md)\n")
+    print(summarize(load_manifest(f"{a.output}/manifest.jsonl")), flush=True)
+    # Thư viện `datasets` (chế độ streaming) để lại luồng nền, đôi khi làm Python crash lúc thoát
+    # dù dữ liệu đã ghi xong. Mọi file đã đóng, nên thoát thẳng để mã thoát phản ánh đúng kết quả.
+    os._exit(0)
+
+
+def cmd_validate(a):
+    cfg = load_config(a.config)
+    items = load_manifest(cfg.dataset)
+    missing = [it for it in items if not all(p.exists() for p in it.images)]
+    print(f"Manifest: {cfg.dataset}\n")
+    print(summarize(items))
+    print()
+    if missing:
+        print(f"✘ {len(missing)} mẫu thiếu ảnh, ví dụ: {[m.id for m in missing[:3]]}")
+    empty = [it.id for it in items if not it.gt.strip()]
+    if empty:
+        print(f"⚠ {len(empty)} mẫu có đáp án rỗng, ví dụ: {empty[:3]}")
+    small = sorted({it.category for it in items if it.split == 'dev'} )
+    for c in small:
+        n = sum(1 for it in items if it.category == c and it.split == "dev")
+        if n < 30:
+            print(f"⚠ nhóm '{c}' chỉ có {n} mẫu dev: khoảng tin cậy sẽ rất rộng")
+    print(f"\nModel trong config ({len(cfg.models)}):")
+    for m in cfg.models:
+        flag = "" if m.enabled else "  (enabled: false)"
+        print(f"  - {m.name:<28} adapter={m.adapter:<12} gpus={m.gpus}{flag}")
+    if missing:
+        sys.exit(1)
+
+
+def cmd_vram(a):
+    from .vram import free_vram_gb, report_plans
+
+    cfg = load_config(a.config)
+    specs = cfg.select(_csv(a.models)) if a.models else cfg.models
+    free = [float(x) for x in a.vram_gb.split(",")] if a.vram_gb else free_vram_gb()
+    impossible = report_plans(cfg, specs, free, a.long)
+    sys.exit(2 if impossible else 0)
+
+
+def cmd_decide(a):
+    from .decide import decide, write_decision
+
+    cfg = load_config(a.config)
+    split = _split_arg(a)
+    dec = decide(cfg, split, a.stage, models=_csv(a.models), categories=_csv(a.categories),
+                 per_category=a.per_category, max_unstable=a.max_unstable, max_finalists=a.max_finalists)
+    path = write_decision(cfg, dec)
+    print(path.read_text(encoding="utf-8"))
+    print(f"\nĐã ghi: {path} (và bản .json)")
+
+
+def cmd_run(a):
+    from .report import build_report
+    from .runner import run_all
+
+    cfg = load_config(a.config)
+    split = _split_arg(a)
+    specs = cfg.select(_csv(a.models))
+    if not specs:
+        sys.exit("Không có model nào để chạy (kiểm tra 'enabled' hoặc --models).")
+    results = run_all(
+        cfg, specs, split, categories=_csv(a.categories), limit=a.limit, retry_errors=a.retry_errors,
+        gpus=_csv(a.gpus), inline=a.inline, per_category=a.per_category,
+    )
+    failed = [m for m, code in results.items() if code != 0]
+    if not a.no_score:
+        items = load_manifest(cfg.dataset, split=split, categories=_csv(a.categories), limit=a.limit,
+                              per_category=a.per_category)
+        out = build_report(cfg, split, [s.name for s in specs], items)
+        print(f"\nBáo cáo: {out / 'report.md'}")
+    if failed:
+        print(f"\n⚠ Model kết thúc với lỗi: {failed}. Chạy lại lệnh để tiếp tục từ chỗ dừng.")
+        sys.exit(1)
+
+
+def cmd_score(a):
+    from .report import build_report
+    from .score import list_scored_models
+
+    cfg = load_config(a.config)
+    split = _split_arg(a)
+    models = _csv(a.models) or list_scored_models(cfg, split)
+    if not models:
+        sys.exit(f"Chưa có kết quả nào trong {cfg.output_dir / split}")
+    items = load_manifest(cfg.dataset, split=split, categories=_csv(a.categories), limit=a.limit,
+                              per_category=a.per_category)
+    out = build_report(cfg, split, models, items)
+    print(f"Báo cáo: {out / 'report.md'}\nCSV: {out / 'summary.csv'}")
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="ocrbench", description="So sánh nhiều model OCR trên cùng một bộ test")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("make-manifest", help="tạo manifest.jsonl từ thư mục DATA_DIR/<nhóm>/<file>")
+    p.add_argument("data_dir")
+    p.add_argument("-o", "--output", required=True)
+    p.add_argument("--holdout-ratio", type=float, default=0.5, help="tỉ lệ doc_id đưa vào holdout (mặc định 0.5)")
+    p.add_argument("--seed", default="ocrbench")
+    p.add_argument("--doc-sep", default="__", help="ký tự ngăn doc_id và số trang trong tên file")
+    p.set_defaults(func=cmd_make_manifest)
+
+    p = sub.add_parser("build-testset", help="dựng bộ test từ dữ liệu công khai + tài liệu tổng hợp")
+    p.add_argument("output")
+    p.add_argument("--public-n", type=int, default=80, help="số mẫu lấy từ MỖI nguồn công khai")
+    p.add_argument("--synth-n", type=int, default=80, help="số tài liệu tổng hợp cho MỖI nhóm syn_*")
+    p.add_argument("--holdout-ratio", type=float, default=0.5)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--no-public", action="store_true")
+    p.add_argument("--no-synth", action="store_true")
+    p.add_argument("--sources", help="chỉ các nguồn công khai này (vd. misraj_dococr,iam_lines)")
+    p.add_argument("--categories", help="chỉ các nhóm tổng hợp này (vd. syn_invoice_ar)")
+    p.add_argument("--scale", type=float, default=1.5, help="độ phân giải ảnh tổng hợp (1.5 ≈ 180 dpi)")
+    p.set_defaults(func=cmd_build_testset)
+
+    p = sub.add_parser("validate", help="kiểm tra manifest và config")
+    p.add_argument("--config", required=True)
+    p.set_defaults(func=cmd_validate)
+
+    p = sub.add_parser("decide", help="áp luật loại/chọn model theo từng nhóm (không phải tự tính)")
+    p.add_argument("--config", required=True)
+    p.add_argument("--stage", required=True, choices=["screening", "final"])
+    p.add_argument("--models")
+    p.add_argument("--split", default="dev", choices=["dev", "holdout"])
+    p.add_argument("--confirm-holdout", action="store_true")
+    p.add_argument("--categories")
+    p.add_argument("--per-category", type=int, help="phải GIỐNG HỆT giá trị đã dùng khi run (vd. 20 ở vòng sàng lọc)")
+    p.add_argument("--max-unstable", type=float, default=0.15)
+    p.add_argument("--max-finalists", type=int, default=4)
+    p.set_defaults(func=cmd_decide)
+
+    p = sub.add_parser("vram", help="kiểm tra GPU, ước lượng VRAM và chọn cấu hình chạy được cho từng model")
+    p.add_argument("--config", required=True)
+    p.add_argument("--models", help="chỉ các model này (mặc định: mọi model trong config, kể cả đang tắt)")
+    p.add_argument("--long", action="store_true", help="tính cho tài liệu dài 2–3 trang (cần nhiều VRAM hơn)")
+    p.add_argument("--vram-gb", help="bỏ qua nvidia-smi, dùng VRAM trống cho trước, vd. 15,15")
+    p.set_defaults(func=cmd_vram)
+
+    for name, func, help_ in [("run", cmd_run, "chạy model rồi chấm điểm"), ("score", cmd_score, "chỉ chấm điểm + báo cáo")]:
+        p = sub.add_parser(name, help=help_)
+        p.add_argument("--config", required=True)
+        p.add_argument("--models", help="chỉ chạy các model này (phân cách bằng dấu phẩy)")
+        p.add_argument("--split", default="dev", choices=["dev", "holdout"])
+        p.add_argument("--confirm-holdout", action="store_true")
+        p.add_argument("--categories", help="chỉ các nhóm này")
+        p.add_argument("--limit", type=int, help="chỉ N mẫu đầu (để thử nhanh)")
+        p.add_argument("--per-category", type=int, help="tập con: N mẫu mỗi nhóm, cố định cho mọi model")
+        if name == "run":
+            p.add_argument("--gpus", help="vd. 0,1: chạy song song, mỗi model một GPU")
+            p.add_argument("--retry-errors", action="store_true", help="chạy lại các mẫu bị lỗi")
+            p.add_argument("--inline", action="store_true", help="chạy ngay trong tiến trình này (để debug)")
+            p.add_argument("--no-score", action="store_true")
+        p.set_defaults(func=func)
+
+    a = ap.parse_args(argv)
+    a.func(a)
+
+
+if __name__ == "__main__":
+    main()
