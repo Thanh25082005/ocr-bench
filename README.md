@@ -186,6 +186,12 @@ bash setup.sh      # code + thư viện + bộ test từ Drive + config + khôi 
   `ocrbench run` chạy tiếp từ chỗ dừng.
 - Lệnh tay: `ocrbench status --config C --push [--note "..."]`, `ocrbench restore --config C`.
 
+**Chạy cả hàng đợi ~10 model bằng `/goal`:** prompt ở [docs/GOAL_PROMPT.md](docs/GOAL_PROMPT.md). Hàng đợi trong
+`goal/queue.yaml`. Mỗi model xong thì `ocrbench benchmark` cập nhật `BENCHMARK.md`, đẩy lên nhánh `results`, rồi
+`ocrbench clean-cache` xóa trọng số. `ocrbench goal-check` in tiến độ, việc tiếp theo, và `GOAL: ĐẠT` khi xong.
+Hàng đợi và code chấm điểm bị khóa sha256 (`goal/GOAL_LOCK.sha256`); đổi hàng đợi thì chạy
+`ocrbench goal-check --config C --write-lock` rồi commit.
+
 Kaggle không có SSH chính thức; mở tunnel có thể bị chặn, và rủi ro với tài khoản do người dùng tự cân nhắc.
 
 ## 6. Giao cho agent chạy

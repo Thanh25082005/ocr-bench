@@ -32,7 +32,7 @@ TOKEN_FILE = Path.home() / ".config" / "ocrbench" / "github_token"
 CODE_DIR = Path(__file__).resolve().parents[1]
 RUN_FILES = ("predictions.jsonl", "meta.json")
 REPORT_GLOBS = ("report.md", "summary.csv", "decision_*.md", "decision_*.json")
-WORK_FILES = ("EXPERIMENTS.md", "FINAL_REPORT.md")
+WORK_FILES = ("EXPERIMENTS.md", "FINAL_REPORT.md", "BENCHMARK.md", "goal_skips.yaml")
 
 
 # --- status.md --------------------------------------------------------------------------

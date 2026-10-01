@@ -87,7 +87,19 @@ curl -fsSL https://claude.ai/install.sh | bash     # hoặc: npm install -g @ant
 claude                                             # lần đầu: làm theo hướng dẫn đăng nhập (mở URL trên máy anh)
 ```
 
-Điền mục 2 của `AGENT_PROMPT.md` (giờ bắt đầu phiên, ngân sách GPU, danh sách nhóm), rồi giao việc:
+**Chế độ /goal — chạy lần lượt ~10 model trong `goal/queue.yaml` tới khi xong** (khuyên dùng):
+
+```
+/goal Làm đúng theo /kaggle/working/ocr-bench/docs/GOAL_PROMPT.md cho tới khi lệnh
+`ocrbench goal-check --config /kaggle/working/config.yaml` in ra dòng `GOAL: ĐẠT`.
+```
+
+Mỗi model xong: bảng xếp hạng `BENCHMARK.md` được cập nhật và đẩy lên GitHub
+(https://github.com/khanhkhmt/ocr-bench/blob/results/BENCHMARK.md), rồi trọng số model bị xóa khỏi ổ đĩa để lấy chỗ
+cho model sau. Tự xem tiến độ bất cứ lúc nào: `ocrbench goal-check --config /kaggle/working/config.yaml`.
+
+**Chế độ từng giai đoạn** (sàng lọc → chung kết, theo `AGENT_PROMPT.md`): điền mục 2 của `AGENT_PROMPT.md` (giờ bắt
+đầu phiên, ngân sách GPU, danh sách nhóm), rồi giao việc:
 
 > Đọc và làm đúng theo `/kaggle/working/ocr-bench/AGENT_PROMPT.md`. Config: `/kaggle/working/config.yaml`.
 > OUT = `/kaggle/working/runs`, WORK = `/kaggle/working`. Phiên Kaggle bắt đầu lúc `<giờ>`. Ngân sách: `<số>` giờ GPU.

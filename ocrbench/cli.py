@@ -126,6 +126,37 @@ def cmd_restore(a):
         print(f"  ... và {len(done) - 20} file khác")
 
 
+def cmd_benchmark(a):
+    from .benchmark import write_benchmark
+
+    cfg = load_config(a.config)
+    path = write_benchmark(cfg)
+    print(path.read_text(encoding="utf-8"))
+    print(f"Đã ghi {path}. Đẩy lên GitHub: ocrbench status --config {a.config} --push")
+
+
+def cmd_goal_check(a):
+    from .goal import report, write_lock
+
+    cfg = load_config(a.config)
+    if a.write_lock:
+        print(f"Đã ghi khóa: {write_lock(cfg)}  (chỉ con người được làm việc này)")
+        return
+    text, ok = report(cfg)
+    print(text)
+    sys.exit(0 if ok else 1)
+
+
+def cmd_clean_cache(a):
+    from .goal import clean_cache
+
+    cfg = load_config(a.config)
+    try:
+        print(clean_cache(cfg, a.item, force=a.force))
+    except Exception as e:
+        sys.exit(f"✘ {e}")
+
+
 def cmd_run(a):
     from .report import build_report
     from .runner import run_all
@@ -203,6 +234,21 @@ def main(argv=None):
     p = sub.add_parser("restore", help="kéo kết quả đã đẩy (nhánh results) về máy này để chạy tiếp")
     p.add_argument("--config", required=True)
     p.set_defaults(func=cmd_restore)
+
+    p = sub.add_parser("benchmark", help="sinh BENCHMARK.md: bảng xếp hạng các model trong hàng đợi /goal")
+    p.add_argument("--config", required=True)
+    p.set_defaults(func=cmd_benchmark)
+
+    p = sub.add_parser("goal-check", help="trạng thái hàng đợi /goal, việc tiếp theo, và GOAL: ĐẠT khi xong")
+    p.add_argument("--config", required=True)
+    p.add_argument("--write-lock", action="store_true", help="CHỈ CON NGƯỜI: tạo lại goal/GOAL_LOCK.sha256")
+    p.set_defaults(func=cmd_goal_check)
+
+    p = sub.add_parser("clean-cache", help="xóa trọng số Hugging Face của một model sau khi benchmark đã lên GitHub")
+    p.add_argument("--config", required=True)
+    p.add_argument("--item", required=True, help="tên model trong goal/queue.yaml (xóa cả các biến thể)")
+    p.add_argument("--force", action="store_true", help="chỉ dùng cho model đã ghi vào goal_skips.yaml")
+    p.set_defaults(func=cmd_clean_cache)
 
     p = sub.add_parser("decide", help="áp luật loại/chọn model theo từng nhóm (không phải tự tính)")
     p.add_argument("--config", required=True)

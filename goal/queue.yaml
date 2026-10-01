@@ -1,0 +1,22 @@
+# Hàng đợi model cho chế độ /goal (docs/GOAL_PROMPT.md). Chạy đúng thứ tự từ trên xuống.
+# Tên phải là tên mục model trong config. Các biến thể agent tạo thêm (vd. amad_vlm6__2gpu,
+# baseer__long) được tính chung cho model gốc.
+#
+# File này bị khóa sha256 (goal/GOAL_LOCK.sha256). Sửa xong phải tạo lại khóa:
+#   ocrbench goal-check --config <config> --write-lock      (chỉ con người làm)
+
+split: dev
+max_skips: 3            # bỏ qua quá số này thì goal không đạt, agent phải dừng hỏi
+max_error_rate: 0.01    # tỉ lệ mẫu lỗi tối đa để một model được coi là chạy xong
+
+queue:
+  - tesseract            # OCR truyền thống, CPU — mốc so sánh rẻ nhất
+  - easyocr
+  - paddleocr_ar
+  - paddleocr_vl         # VLM tài liệu ~0,9 tỉ tham số
+  - baseer               # Qwen2-VL-2B fine-tune tiếng Ả Rập
+  - sherif_handwriting   # Qwen2.5-VL-3B, chữ viết tay Ả Rập–Anh
+  - qari_0_4             # Qwen3-VL-4B + LoRA tiếng Ả Rập
+  - amad_vlm6            # 8,3 tỉ tham số — không vừa 1 T4 ở fp16
+  - hunyuan_ocr          # cần trust_remote_code; license riêng của Tencent
+  - surya                # cần venv riêng

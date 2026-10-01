@@ -7,6 +7,8 @@
 
 ## 0. Cách đọc file này
 
+- **Chế độ /goal** (chạy lần lượt cả hàng đợi model): quy trình theo `docs/GOAL_PROMPT.md` thay cho mục 4 của file này;
+  mọi luật ở mục 3, 6, 7, 8, 9 vẫn bắt buộc.
 - **PHẢI** = bắt buộc làm. **CẤM** = tuyệt đối không làm. **CHỈ ĐƯỢC** = mọi cách khác đều bị cấm.
 - Lệnh trong khung `bash` phải chạy **đúng như viết**; chỉ thay các chỗ trong `<...>`.
 - Không có quy tắc nào cho phép "tự phán đoán". Gặp tình huống file này không nói tới: **DỪNG và hỏi** (mục 9).
