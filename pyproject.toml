@@ -21,7 +21,7 @@ easyocr = ["easyocr"]
 paddle = ["paddleocr>=3.3"]
 surya = ["surya-ocr"]
 api = ["requests"]
-testset = ["datasets>=3", "playwright", "numpy", "lxml>=5"]
+testset = ["datasets>=3", "playwright", "numpy", "lxml>=5", "gdown>=5"]
 dev = ["pytest", "apted>=1.0.3", "lxml>=5"]
 
 [project.scripts]

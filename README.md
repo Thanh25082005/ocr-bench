@@ -172,13 +172,12 @@ và rủi ro với tài khoản do anh tự cân nhắc. Khi đã SSH vào đư�
 # Trên máy Kaggle (repo private nên cần token chỉ-đọc):
 curl -sL -H "Authorization: token <TOKEN>" \
   https://raw.githubusercontent.com/khanhkhmt/ocr-bench/main/scripts/kaggle/setup.sh -o setup.sh
-GITHUB_TOKEN=<TOKEN> BUILD_TESTSET=0 bash setup.sh
+GITHUB_TOKEN=<TOKEN> bash setup.sh
 ```
 
-```bash
-# Trên máy của anh: đưa bộ test đã dựng sẵn lên (hoặc bỏ BUILD_TESTSET=0 ở trên để dựng lại trên Kaggle)
-bash scripts/kaggle/push_testset.sh <ssh-host>
-```
+`setup.sh` tự tải bộ test từ Google Drive (`scripts/get_testset.py`, khoảng 20–25 phút; bị ngắt thì chạy lại để tải
+tiếp) và kiểm tra dấu vân tay. Muốn dựng lại trên Kaggle thì dùng `TESTSET=build`; muốn tự đưa lên từ máy mình thì
+dùng `TESTSET=none` rồi chạy `bash scripts/kaggle/push_testset.sh <ssh-host>`.
 
 ```bash
 # Trên Kaggle: mọi lệnh chạy lâu đặt trong tmux, để mất SSH vẫn chạy tiếp

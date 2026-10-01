@@ -5,8 +5,10 @@
 #
 # Biến môi trường tùy chọn:
 #   WORK=/kaggle/working     thư mục làm việc
-#   BUILD_TESTSET=1          dựng bộ test ngay trên Kaggle (~20–30 phút) nếu chưa có;
-#                            đặt 0 nếu sẽ tải bộ test từ máy mình lên bằng push_testset.sh
+#   TESTSET=drive            lấy bộ test khi chưa có:
+#                              drive = tải từ Google Drive (scripts/get_testset.py, ~20–25 phút)
+#                              build = dựng lại ngay trên Kaggle (~20–30 phút)
+#                              none  = không làm gì (sẽ tự đưa lên bằng push_testset.sh)
 set -euo pipefail
 
 WORK=${WORK:-/kaggle/working}
@@ -15,7 +17,7 @@ CODE=$WORK/ocr-bench
 DATA=$WORK/testset
 RUNS=$WORK/runs
 CONFIG=$WORK/config.yaml
-BUILD_TESTSET=${BUILD_TESTSET:-1}
+TESTSET=${TESTSET:-drive}
 
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
@@ -47,7 +49,11 @@ python -c "import torch, transformers; print('torch', torch.__version__, '| tran
 step "Bộ test"
 if [ -f "$DATA/manifest.jsonl" ]; then
   echo "Đã có $DATA/manifest.jsonl"
-elif [ "$BUILD_TESTSET" = "1" ]; then
+elif [ "$TESTSET" = "drive" ]; then
+  pip install -q gdown
+  python "$CODE/scripts/get_testset.py" --out "$DATA" || {
+    echo "Tải chưa xong. Chạy lại: python $CODE/scripts/get_testset.py --out $DATA"; exit 1; }
+elif [ "$TESTSET" = "build" ]; then
   python -m playwright install --with-deps chromium >/dev/null
   ocrbench build-testset "$DATA" --public-n 120 --synth-n 120
 else
