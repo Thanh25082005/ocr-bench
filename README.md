@@ -76,6 +76,8 @@ ocrbench score --config config.yaml                       # chỉ chấm lại v
 ocrbench vram --config config.yaml [--long]               # VRAM trống, VRAM từng model cần, cấu hình nên dùng
 ocrbench decide --config config.yaml --stage screening --per-category 20   # loại/chọn model theo luật cố định
 ocrbench decide --config config.yaml --stage final                         # chọn model thắng cho từng nhóm
+ocrbench status --config config.yaml --push   # ghi runs/status.md, đẩy kết quả lên nhánh results (GitHub)
+ocrbench restore --config config.yaml         # phiên mới: kéo kết quả từ nhánh results về để chạy tiếp
 ```
 
 Ý nghĩa của từng chỉ số trong báo cáo, kèm ví dụ: **[docs/METRICS.md](docs/METRICS.md)**.
@@ -163,37 +165,28 @@ uv pip install -p /kaggle/working/venvs/surya/bin/python surya-ocr -e /kaggle/wo
   của lần trước làm input rồi copy thư mục `runs` về `/kaggle/working`; tool sẽ tự chạy tiếp phần còn thiếu.
 - Dữ liệu tải lên Kaggle là tải lên dịch vụ của bên thứ ba. Cần kiểm tra lại cam kết bảo mật với bên cung cấp dữ liệu.
 
-## 5b. Chạy trên Kaggle qua SSH
+## 5b. Chạy trên Kaggle qua SSH (có agent, chịu được server sập)
 
-Kaggle không có SSH chính thức. Anh tự mở kết nối SSH vào notebook (qua tunnel); cách này có thể bị Kaggle chặn,
-và rủi ro với tài khoản do anh tự cân nhắc. Khi đã SSH vào được:
+**Hướng dẫn đầy đủ từng bước: [docs/RUNBOOK.md](docs/RUNBOOK.md).** Tóm tắt:
 
 ```bash
-# Trên máy Kaggle (repo private nên cần token chỉ-đọc):
-curl -sL -H "Authorization: token <TOKEN>" \
+# Trên server Kaggle, sau khi SSH vào
+tmux new -s setup && cd /kaggle/working
+read -rs GITHUB_TOKEN && export GITHUB_TOKEN     # token fine-grained: repo ocr-bench, Contents: Read and write
+curl -fsSL -H "Authorization: token $GITHUB_TOKEN" \
   https://raw.githubusercontent.com/khanhkhmt/ocr-bench/main/scripts/kaggle/setup.sh -o setup.sh
-GITHUB_TOKEN=<TOKEN> bash setup.sh
+bash setup.sh      # code + thư viện + bộ test từ Drive + config + khôi phục kết quả phiên trước
 ```
 
-`setup.sh` tự tải bộ test từ Google Drive (`scripts/get_testset.py`, khoảng 20–25 phút; bị ngắt thì chạy lại để tải
-tiếp) và kiểm tra dấu vân tay. Muốn dựng lại trên Kaggle thì dùng `TESTSET=build`; muốn tự đưa lên từ máy mình thì
-dùng `TESTSET=none` rồi chạy `bash scripts/kaggle/push_testset.sh <ssh-host>`.
+- **Tự lưu tiến độ ra ngoài server:** mỗi khi một model chạy xong và cứ 30 phút trong lúc chạy, tool ghi
+  `runs/status.md` rồi đẩy status, config, nhật ký, báo cáo và kết quả thô lên **nhánh `results`** trên GitHub
+  (bật bằng `status.push: true` trong config; `setup.sh` tự bật). Theo dõi từ xa:
+  https://github.com/khanhkhmt/ocr-bench/blob/results/status.md
+- **Server sập:** mở phiên mới, chạy lại `setup.sh`. Nó gọi `ocrbench restore` để kéo kết quả về, và
+  `ocrbench run` chạy tiếp từ chỗ dừng.
+- Lệnh tay: `ocrbench status --config C --push [--note "..."]`, `ocrbench restore --config C`.
 
-```bash
-# Trên Kaggle: mọi lệnh chạy lâu đặt trong tmux, để mất SSH vẫn chạy tiếp
-tmux new -s bench
-ocrbench run --config /kaggle/working/config.yaml --per-category 1 --gpus 0,1
-```
-
-**Phiên Kaggle tối đa 12 giờ; hết phiên là `/kaggle/working` bị xóa.** Vì vậy:
-
-| Khi nào | Lệnh (chạy trên máy của anh) |
-|---|---|
-| Trong lúc chạy, định kỳ (vd. 30 phút một lần) | `bash scripts/kaggle/pull_results.sh <ssh-host>` → lưu vào `kaggle_results/` |
-| Mở phiên Kaggle mới, sau khi chạy lại `setup.sh` | `bash scripts/kaggle/push_results.sh <ssh-host>`, rồi chạy lại đúng lệnh `ocrbench run` cũ: tool bỏ qua mẫu đã có |
-
-Hai máy có cùng **dấu vân tay dữ liệu** (dòng thứ hai của `ocrbench validate`) nghĩa là cùng một bộ test, và kết
-quả cũ dùng tiếp được.
+Kaggle không có SSH chính thức; mở tunnel có thể bị chặn, và rủi ro với tài khoản do người dùng tự cân nhắc.
 
 ## 6. Giao cho agent chạy
 

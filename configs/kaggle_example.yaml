@@ -23,6 +23,12 @@ normalization:
   unify_punct: false       # true: ، ؛ ؟ -> , ; ?
   lowercase: false
 
+# Tự ghi runs/status.md sau mỗi model; push: true thì đẩy cả status.md, config, nhật ký và kết quả thô lên
+# nhánh `results` của repo (cần token có quyền ghi, xem scripts/kaggle/setup.sh). setup.sh tự bật push.
+status:
+  push: false
+  every_min: 30
+
 # Tài liệu dài (syn_longtable / syn_longtext, 1–3 trang): VLM nhận mọi trang trong MỘT lần gọi
 # (`multi_page: joint`, mặc định). Cần `max_new_tokens` đủ lớn (bảng 3 trang ≈ 6.000–9.000 token) và
 # giới hạn độ phân giải ảnh (`processor_kwargs: {max_pixels: ...}` hoặc `max_image_side`) để không hết VRAM.

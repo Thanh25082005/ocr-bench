@@ -25,12 +25,27 @@ class ModelSpec:
 
 
 @dataclass
+class StatusConfig:
+    """Tự động ghi status.md và đẩy kết quả lên GitHub (phòng khi server sập)."""
+    push: bool = False  # đẩy lên GitHub sau mỗi model chạy xong và định kỳ trong lúc chạy
+    every_min: int = 30  # chu kỳ đẩy trong lúc model đang chạy
+    remote: str | None = None  # mặc định: remote 'origin' của repo code
+    branch: str = "results"
+
+
+@dataclass
 class Config:
     path: Path
     dataset: Path
     output_dir: Path
     normalization: NormConfig
     models: list[ModelSpec]
+    status: StatusConfig = field(default_factory=StatusConfig)
+
+    @property
+    def work_dir(self) -> Path:
+        """Thư mục chứa output_dir; nơi để EXPERIMENTS.md, FINAL_REPORT.md, reports/."""
+        return Path(self.output_dir).parent
 
     def model(self, name: str) -> ModelSpec:
         for m in self.models:
@@ -73,6 +88,12 @@ def load_config(path: str | Path) -> Config:
                 enabled=bool(m.get("enabled", True)),
             )
         )
+    st = raw.get("status") or {}
+    unknown = set(st) - {"push", "every_min", "remote", "branch"}
+    if unknown:
+        raise ValueError(f"status: trường không hợp lệ {sorted(unknown)}")
+    status = StatusConfig(push=bool(st.get("push", False)), every_min=int(st.get("every_min", 30)),
+                          remote=st.get("remote"), branch=str(st.get("branch", "results")))
     names = [m.name for m in models]
     dup = {n for n in names if names.count(n) > 1}
     if dup:
@@ -83,4 +104,5 @@ def load_config(path: str | Path) -> Config:
         output_dir=resolve(raw.get("output_dir", "runs")),
         normalization=NormConfig.from_dict(raw.get("normalization")),
         models=models,
+        status=status,
     )

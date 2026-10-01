@@ -26,6 +26,8 @@ Bạn **KHÔNG** làm các việc sau: chọn ngưỡng pass/fail, chấm trên 
 | Thư mục code tool | `<<vd. /kaggle/working/ocr-bench>>` |
 | File config (gọi tắt là `C` trong các lệnh) | `<<vd. /kaggle/working/config.yaml>>` |
 | Thư mục output (`output_dir` trong config, gọi tắt là `OUT`) | `<<vd. /kaggle/working/runs>>` |
+| Thư mục làm việc (gọi tắt là `WORK`, chứa `EXPERIMENTS.md`, `FINAL_REPORT.md`, `reports/`) | `<<vd. /kaggle/working>>` |
+| Nơi lưu kết quả phòng server sập | nhánh `results` của repo GitHub; xem tại `https://github.com/khanhkhmt/ocr-bench/blob/results/status.md` |
 | GPU | `<<vd. 2× T4 16 GB (Compute Capability 7.5: không có bf16, không dùng vLLM)>>` |
 | Ngân sách GPU cho toàn bộ nhiệm vụ | `<<vd. 20 giờ GPU>>` |
 | Thời lượng tối đa một phiên | `<<vd. 12 giờ>>` |
@@ -56,11 +58,28 @@ Cột "Tool chặn" cho biết tool đã tự chặn hoặc tự phát hiện vi
 | L15 | **PHẢI** cộng dồn giờ GPU đã dùng vào nhật ký. Khi tổng đạt **80% ngân sách**: **DỪNG và hỏi**. | Không |
 | L16 | **CẤM** giảm `max_new_tokens`, và **CẤM** đổi sang `dtype: float32` để chữa lỗi hết bộ nhớ. | Không |
 | L17 | **PHẢI** chạy mọi lệnh `ocrbench run` bên trong phiên tmux `bench` (`tmux new -s bench`, hoặc `tmux attach -t bench` nếu đã có). **CẤM** chạy `ocrbench run` trực tiếp trong phiên SSH. | Không |
-| L18 | **CẤM** bắt đầu lệnh `ocrbench run` mới nếu phiên Kaggle còn **dưới 1 giờ** (tính từ giờ bắt đầu ở mục 2). Khi còn dưới 1 giờ: dừng sau lệnh đang chạy, cập nhật nhật ký, rồi **DỪNG và hỏi** để con người kéo kết quả về. | Không |
+| L18 | **CẤM** bắt đầu lệnh `ocrbench run` mới nếu phiên Kaggle còn **dưới 1 giờ** (tính từ giờ bắt đầu ở mục 2). Khi còn dưới 1 giờ: dừng sau lệnh đang chạy, cập nhật nhật ký, chạy lệnh của L20, rồi **DỪNG và hỏi**. | Không |
+| L19 | Server có thể sập bất cứ lúc nào. Tool **tự** ghi `OUT/status.md` và đẩy kết quả lên nhánh `results` trên GitHub mỗi khi **một model chạy xong** và cứ 30 phút trong lúc chạy. Sau **mỗi** model kết thúc, **PHẢI** tìm trong output dòng `✔ STATUS:` của lần đó. Thấy `✘ ĐẨY STATUS THẤT BẠI` **2 lần liên tiếp**: **DỪNG và hỏi**. **CẤM** tắt `status.push` trong config. | Có: tự đẩy |
+| L20 | Ngay sau **mỗi** lần ghi nhật ký (L14) và sau **mỗi** lệnh `ocrbench decide`, **PHẢI** chạy: `ocrbench status --config C --push --note "<giai đoạn, bước vừa xong>"`, và phải thấy dòng `✔ STATUS:`. Nhật ký chỉ được coi là đã lưu khi đã lên GitHub. | Không |
 
 ## 4. Quy trình
 
 Làm **đúng thứ tự**, không bỏ bước. Mỗi giai đoạn có "Điều kiện để sang giai đoạn sau"; chưa đạt thì không được đi tiếp.
+
+### 4.00. Bắt đầu phiên — LUÔN làm bước này trước tiên
+
+```bash
+ocrbench restore --config C
+cat OUT/status.md
+tail -n 40 WORK/EXPERIMENTS.md 2>/dev/null || echo "chưa có nhật ký"
+```
+
+- **Chưa có nhật ký** (`chưa có nhật ký`): đây là lần đầu. Làm từ giai đoạn 0.
+- **Đã có nhật ký**: đây là phiên tiếp theo, có thể do server đã sập. Đọc dòng `Việc tiếp theo` của mục nhật ký
+  **cuối cùng** và làm tiếp đúng bước đó. Nếu mục cuối là một lệnh `ocrbench run` chưa ghi `Kết thúc`: chạy lại
+  **đúng lệnh đó** (tool tự bỏ qua mẫu đã có). Ghi thêm vào nhật ký một mục:
+  `## <giờ> — Phiên mới — khôi phục từ GitHub, tiếp tục: <bước>`, rồi làm L20.
+- **CẤM** chạy lại từ đầu một giai đoạn đã có kết quả trong nhật ký.
 
 ### 4.0. Giai đoạn 0: Kiểm tra (không chạy model)
 
@@ -124,7 +143,7 @@ lỗi của từng lần, rồi bỏ qua model đó.
 ```bash
 ocrbench run    --config C --per-category 20 --categories <nhóm thường> --gpus 0,1
 ocrbench decide --config C --stage screening --per-category 20 --categories <nhóm thường>
-mkdir -p reports && cp -r OUT/dev/_report reports/phase2_screening
+mkdir -p WORK/reports && cp -r OUT/dev/_report WORK/reports/phase2_screening
 ```
 
 - Danh sách vào chung kết của từng nhóm **CHỈ ĐƯỢC** lấy từ dòng `**Vào chung kết:**` trong
@@ -147,7 +166,7 @@ Chỉ xét những model **có tên trong danh sách chung kết của ít nhấ
 ```bash
 ocrbench run    --config C --per-category 12 --categories syn_longtable,syn_longtext --models <danh sách __long> --gpus 0,1
 ocrbench decide --config C --stage screening --per-category 12 --categories syn_longtable,syn_longtext
-cp -r OUT/dev/_report reports/phase2b_long
+cp -r OUT/dev/_report WORK/reports/phase2b_long
 ```
 
 4. Chép nguyên văn vào nhật ký: danh sách chung kết của hai nhóm dài, và bảng "Tài liệu dài" trong `report.md`
@@ -169,7 +188,7 @@ Chạy xong mọi nhóm thì:
 
 ```bash
 ocrbench decide --config C --stage final
-cp -r OUT/dev/_report reports/phase3_final
+cp -r OUT/dev/_report WORK/reports/phase3_final
 ```
 
 Chép nguyên văn vào nhật ký dòng `**Thắng:**` của từng nhóm trong `decision_final.md`.
@@ -197,7 +216,7 @@ Chép nguyên văn vào nhật ký dòng `**Thắng:**` của từng nhóm trong
 
 ### 4.6. Giai đoạn 5: Báo cáo cuối
 
-Viết `FINAL_REPORT.md` theo mẫu ở mục 10, rồi **dừng**. Không làm gì thêm cho tới khi con người trả lời.
+Viết `WORK/FINAL_REPORT.md` theo mẫu ở mục 10, chạy `ocrbench status --config C --push --note "báo cáo cuối"` (phải thấy `✔ STATUS:`), rồi **dừng**. Không làm gì thêm cho tới khi con người trả lời.
 
 ## 5. Ước lượng ngân sách
 
@@ -273,9 +292,11 @@ Tra theo thứ tự từ trên xuống. Mỗi dòng là **một** lần sửa.
 | Tool báo `TỪ CHỐI CHẠY` | Bạn đã đổi cấu hình dưới tên cũ (L5). Đưa cấu hình về như cũ, hoặc tạo mục với tên mới |
 | Lỗi không có trong bảng | **DỪNG và hỏi**, kèm 30 dòng cuối của `run.log` |
 
-## 8. Nhật ký (`EXPERIMENTS.md`)
+## 8. Nhật ký (`WORK/EXPERIMENTS.md`)
 
-Thêm **một mục cho mỗi lệnh `ocrbench run`**, theo đúng mẫu (không bỏ dòng nào, dòng không áp dụng thì ghi `—`):
+File phải nằm đúng ở `WORK/EXPERIMENTS.md` (vd. `/kaggle/working/EXPERIMENTS.md`), vì tool chỉ đẩy file ở vị trí đó
+lên GitHub. Thêm **một mục cho mỗi lệnh `ocrbench run`**, theo đúng mẫu (không bỏ dòng nào, dòng không áp dụng thì
+ghi `—`), rồi làm L20:
 
 ```markdown
 ## <YYYY-MM-DD HH:MM> — Giai đoạn <số> — <tên model, phân cách bằng dấu phẩy>
@@ -303,7 +324,8 @@ Các trường hợp phải dừng:
 6. `ocrbench decide` cho kết quả `(không có)` ở bất kỳ nhóm nào.
 7. Báo cáo có dòng `⚠ CẢNH BÁO: dữ liệu đã thay đổi`.
 8. Phiên Kaggle còn dưới 1 giờ (L18).
-9. Muốn làm bất kỳ việc gì file này không nói tới.
+9. Đẩy status lên GitHub thất bại 2 lần liên tiếp (L19), hoặc `ocrbench restore` báo `✘ KHÔI PHỤC THẤT BẠI`.
+10. Muốn làm bất kỳ việc gì file này không nói tới.
 
 ## 10. Mẫu `FINAL_REPORT.md`
 
@@ -314,13 +336,13 @@ quả, **[SUY RA]** = rút ra từ các số đã đo, **[CHƯA KIỂM CHỨNG]*
 # Báo cáo chọn model OCR — <ngày>
 
 ## 1. Kết quả theo nhóm
-<chép nguyên văn mọi bảng từ reports/phase3_final/decision_final.md>
+<chép nguyên văn mọi bảng từ WORK/reports/phase3_final/decision_final.md>
 
 ## 2. Đề xuất
 | Nhóm | Model thắng | Chỉ số chính (±95%) | Hòa với | Ghi chú |
 
 ## 3. Tài liệu dài
-<chép nguyên văn mục "Tài liệu dài" của reports/phase2b_long/report.md>
+<chép nguyên văn mục "Tài liệu dài" của WORK/reports/phase2b_long/report.md>
 
 ## 4. Model bị loại
 | Model | Giai đoạn | Lý do (chép từ decision_*.md hoặc nhật ký) |

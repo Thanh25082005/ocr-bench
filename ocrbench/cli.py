@@ -98,6 +98,34 @@ def cmd_decide(a):
     print(f"\nĐã ghi: {path} (và bản .json)")
 
 
+def cmd_status(a):
+    from .status import push_status, write_status
+
+    cfg = load_config(a.config)
+    if a.push:
+        try:
+            print(f"✔ STATUS: {push_status(cfg, note=a.note)}")
+        except Exception as e:
+            sys.exit(f"✘ ĐẨY STATUS THẤT BẠI: {e}")
+    else:
+        print(f"Đã ghi {write_status(cfg, note=a.note)}")
+
+
+def cmd_restore(a):
+    from .status import restore
+
+    cfg = load_config(a.config)
+    try:
+        done = restore(cfg)
+    except Exception as e:
+        sys.exit(f"✘ KHÔI PHỤC THẤT BẠI: {e}")
+    print(f"Đã khôi phục {len(done)} file từ nhánh '{cfg.status.branch}':")
+    for d in done[:20]:
+        print("  " + d)
+    if len(done) > 20:
+        print(f"  ... và {len(done) - 20} file khác")
+
+
 def cmd_run(a):
     from .report import build_report
     from .runner import run_all
@@ -165,6 +193,16 @@ def main(argv=None):
     p = sub.add_parser("validate", help="kiểm tra manifest và config")
     p.add_argument("--config", required=True)
     p.set_defaults(func=cmd_validate)
+
+    p = sub.add_parser("status", help="ghi status.md (tiến độ + kết quả nhanh); --push để đẩy lên GitHub")
+    p.add_argument("--config", required=True)
+    p.add_argument("--push", action="store_true")
+    p.add_argument("--note", help="ghi chú ngắn kèm theo (vd. 'xong giai đoạn 2')")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("restore", help="kéo kết quả đã đẩy (nhánh results) về máy này để chạy tiếp")
+    p.add_argument("--config", required=True)
+    p.set_defaults(func=cmd_restore)
 
     p = sub.add_parser("decide", help="áp luật loại/chọn model theo từng nhóm (không phải tự tính)")
     p.add_argument("--config", required=True)

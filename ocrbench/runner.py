@@ -40,9 +40,20 @@ def run_all(
     inline: bool = False,
     per_category: int | None = None,
 ) -> dict[str, int]:
-    """Trả về {tên model: mã thoát}."""
+    """Trả về {tên model: mã thoát}.
+
+    Mỗi khi một model kết thúc (và định kỳ `status.every_min` phút trong lúc chạy), ghi OUT/status.md và,
+    nếu config bật `status.push`, đẩy kết quả lên GitHub, để server sập cũng không mất tiến độ.
+    """
+    from .status import safe_push
+
     if inline:
-        return {s.name: run_model(cfg.path, s, split, categories, limit, retry_errors, per_category) for s in specs}
+        results = {}
+        for s in specs:
+            safe_push(cfg, [s.name], f"bắt đầu {s.name}")
+            results[s.name] = run_model(cfg.path, s, split, categories, limit, retry_errors, per_category)
+            safe_push(cfg, [], f"{s.name} kết thúc (mã {results[s.name]})")
+        return results
 
     total = len(load_manifest(cfg.dataset, split=split, categories=categories, limit=limit, per_category=per_category))
     slots: list[str | None] = list(gpus) if gpus else [None]
@@ -51,6 +62,10 @@ def run_all(
     running: dict[subprocess.Popen, tuple[ModelSpec, list, object, float]] = {}
     results: dict[str, int] = {}
     last_status = time.monotonic()
+    last_push = time.monotonic()
+
+    def running_names():
+        return [s.name for s, *_ in running.values()]
 
     def start(spec: ModelSpec, taken: list):
         out = run_dir(cfg.output_dir, split, spec.name)
@@ -73,6 +88,7 @@ def run_all(
         running[proc] = (spec, taken, log, time.monotonic())
         where = f"GPU {','.join(taken)}" if taken[0] is not None else "thiết bị mặc định"
         print(f"▶ {spec.name}: bắt đầu trên {where} (log: {out / 'run.log'})", flush=True)
+        safe_push(cfg, running_names(), f"bắt đầu {spec.name}")
 
     try:
         while queue or running:
@@ -101,6 +117,12 @@ def run_all(
                 print(f"{mark} {spec.name}: kết thúc (mã {code}) sau {mins:.1f} phút, {done}/{total} mẫu", flush=True)
                 if code != 0:
                     _print_tail(run_dir(cfg.output_dir, split, spec.name) / "run.log")
+                safe_push(cfg, running_names(), f"{spec.name} kết thúc (mã {code}, {done}/{total} mẫu)")
+                last_push = time.monotonic()
+
+            if running and time.monotonic() - last_push >= cfg.status.every_min * 60:
+                safe_push(cfg, running_names(), "cập nhật định kỳ")
+                last_push = time.monotonic()
 
             if running and time.monotonic() - last_status >= STATUS_EVERY_S:
                 last_status = time.monotonic()
