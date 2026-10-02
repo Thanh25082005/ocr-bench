@@ -26,8 +26,9 @@ DEFAULT_VARIANTS = [
     "max_new_tokens=4096",
     "max_new_tokens=4096,batch_size=4",
     "max_new_tokens=4096,batch_size=4,stop_on_loop=true",
-    "max_new_tokens=4096,batch_size=4,stop_on_loop=true,max_pixels=1600000",
 ]
+# Không có biến thể giảm độ phân giải (max_pixels) trong danh sách mặc định: người dùng không chấp nhận đánh đổi
+# độ chính xác. Muốn thử thì thêm bằng --variant.
 
 
 def parse_variant(v: str) -> dict:
