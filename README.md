@@ -101,6 +101,26 @@ runs/dev/
   _report/summary.csv        số liệu theo model × nhóm
 ```
 
+## 2b. Giao diện PDF → DOCX
+
+Sau khi chọn được model, dùng nó để chuyển tài liệu:
+
+```bash
+pip install -e ".[app,hf]"
+ocrbench serve   --config config.yaml --model <tên model>          # giao diện web, mặc định http://127.0.0.1:7860
+ocrbench convert --config config.yaml --model <tên model> a.pdf b.pdf -o docx_out/   # chuyển hàng loạt, không cần giao diện
+```
+
+- Kéo thả một hoặc nhiều PDF / ảnh → tải về DOCX (mỗi trang nguồn là một trang Word, đầu trang ghi nguồn: lớp chữ
+  PDF hay OCR + tên model, để người duyệt biết trang nào cần soát).
+- Trang PDF có sẵn lớp chữ **và không có chữ Ả Rập** → lấy chữ trực tiếp (nhanh, đúng 100%). Trang scan, ảnh, hoặc
+  có chữ Ả Rập → OCR (lớp chữ Ả Rập trong PDF hay bị đảo thứ tự: đo thử CER 74%).
+- Bảng HTML / Markdown của model → bảng Word (giữ ô gộp); đoạn và bảng tiếng Ả Rập tự căn phải, chiều phải-sang-trái.
+- Trên Kaggle: chạy `ocrbench serve` trong tmux, rồi từ máy mình `ssh -L 7860:localhost:7860 kaggle-ngrok` và mở
+  http://localhost:7860. Không dùng `--share` với tài liệu mật (tạo link công khai).
+- Giao diện xử lý lần lượt từng yêu cầu (một GPU). Nếu benchmark đang chiếm GPU thì phải dừng benchmark trước, hoặc
+  chạy giao diện ở phiên Kaggle khác.
+
 ## 3. Chỉ số
 
 | Chỉ số | Ý nghĩa |

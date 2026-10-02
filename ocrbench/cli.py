@@ -157,6 +157,25 @@ def cmd_clean_cache(a):
         sys.exit(f"✘ {e}")
 
 
+def cmd_convert(a):
+    from .convert import Converter
+
+    conv = Converter(a.config, a.model, dpi=a.dpi)
+    for f in a.inputs:
+        res = conv.convert_file(f, a.output, force_ocr=a.force_ocr, pages=a.pages, doc_type=a.doc_type,
+                                progress=lambda k, n, msg: print(f"  {msg} ({k + 1}/{n})", flush=True))
+        n_ocr = sum(1 for p in res.pages if p.source == "OCR")
+        n_err = sum(1 for p in res.pages if p.error)
+        print(f"✔ {res.docx}  ({len(res.pages)} trang: {n_ocr} qua OCR, {len(res.pages) - n_ocr - n_err} từ lớp chữ"
+              + (f", {n_err} LỖI" if n_err else "") + ")")
+
+
+def cmd_serve(a):
+    from .app import serve
+
+    serve(a.config, a.model, host=a.host, port=a.port, share=a.share, dpi=a.dpi)
+
+
 def cmd_run(a):
     from .report import build_report
     from .runner import run_all
@@ -234,6 +253,26 @@ def main(argv=None):
     p = sub.add_parser("restore", help="kéo kết quả đã đẩy (nhánh results) về máy này để chạy tiếp")
     p.add_argument("--config", required=True)
     p.set_defaults(func=cmd_restore)
+
+    p = sub.add_parser("convert", help="chuyển PDF/ảnh sang DOCX bằng một model (không cần giao diện)")
+    p.add_argument("inputs", nargs="+")
+    p.add_argument("--config", required=True)
+    p.add_argument("--model", required=True)
+    p.add_argument("-o", "--output", default="docx_out")
+    p.add_argument("--force-ocr", action="store_true", help="OCR mọi trang, kể cả trang PDF đã có lớp chữ")
+    p.add_argument("--pages", help="vd. 1-3,5")
+    p.add_argument("--doc-type", choices=["text", "table"], default="text")
+    p.add_argument("--dpi", type=int, default=200)
+    p.set_defaults(func=cmd_convert)
+
+    p = sub.add_parser("serve", help="giao diện web: kéo thả PDF/ảnh → tải DOCX")
+    p.add_argument("--config", required=True)
+    p.add_argument("--model", required=True)
+    p.add_argument("--host", default="127.0.0.1", help="mặc định chỉ máy này truy cập; 0.0.0.0 = mọi máy cùng mạng")
+    p.add_argument("--port", type=int, default=7860)
+    p.add_argument("--share", action="store_true", help="tạo link công khai của Gradio (KHÔNG dùng với tài liệu mật)")
+    p.add_argument("--dpi", type=int, default=200)
+    p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("benchmark", help="sinh BENCHMARK.md: bảng xếp hạng các model trong hàng đợi /goal")
     p.add_argument("--config", required=True)
