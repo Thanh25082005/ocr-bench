@@ -168,7 +168,7 @@ def cmd_run(a):
         sys.exit("Không có model nào để chạy (kiểm tra 'enabled' hoặc --models).")
     results = run_all(
         cfg, specs, split, categories=_csv(a.categories), limit=a.limit, retry_errors=a.retry_errors,
-        gpus=_csv(a.gpus), inline=a.inline, per_category=a.per_category,
+        gpus=_csv(a.gpus), inline=a.inline, per_category=a.per_category, shard=not a.no_shard,
     )
     failed = [m for m, code in results.items() if code != 0]
     if not a.no_score:
@@ -282,6 +282,8 @@ def main(argv=None):
             p.add_argument("--gpus", help="vd. 0,1: chạy song song, mỗi model một GPU")
             p.add_argument("--retry-errors", action="store_true", help="chạy lại các mẫu bị lỗi")
             p.add_argument("--inline", action="store_true", help="chạy ngay trong tiến trình này (để debug)")
+            p.add_argument("--no-shard", action="store_true",
+                           help="không chia mẫu cho nhiều GPU khi chỉ chạy một model vừa 1 GPU")
             p.add_argument("--no-score", action="store_true")
         p.set_defaults(func=func)
 

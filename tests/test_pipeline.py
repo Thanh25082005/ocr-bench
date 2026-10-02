@@ -191,3 +191,22 @@ def test_per_category_sample_is_stable_and_stratified(project):
 
     main(["run", "--config", str(project / "config.yaml"), "--models", "oracle", "--per-category", "1"])
     assert len(load_predictions(project / "runs/dev/oracle/predictions.jsonl")) == 4
+
+
+def test_single_model_is_split_across_gpus(project, capsys):
+    """Một model 1-GPU với --gpus 0,1: 2 tiến trình, mỗi tiến trình một nửa mẫu, chung một file kết quả."""
+    import json as _json
+    from ocrbench.worker import shard_of
+    cfg_path = str(project / "config.yaml")
+    main(["run", "--config", cfg_path, "--models", "oracle", "--gpus", "0,1", "--no-score"])
+    out = capsys.readouterr().out
+    assert "chia mẫu cho 2 GPU" in out and out.count("✔ oracle: kết thúc") == 1
+    lines = (project / "runs/dev/oracle/predictions.jsonl").read_text().splitlines()
+    ids = [_json.loads(x)["id"] for x in lines]
+    assert len(ids) == 7 and len(set(ids)) == 7  # đủ, không trùng, không hỏng dòng
+    meta = _json.loads((project / "runs/dev/oracle/meta.json").read_text())
+    assert sorted(s["shard"] for s in meta["sessions"]) == ["1/2", "2/2"]
+    assert {shard_of(i, 2) for i in ids} == {0, 1}
+    # chạy lại: không phần nào phải chạy thêm
+    main(["run", "--config", cfg_path, "--models", "oracle", "--gpus", "0,1", "--no-score"])
+    assert len((project / "runs/dev/oracle/predictions.jsonl").read_text().splitlines()) == 7

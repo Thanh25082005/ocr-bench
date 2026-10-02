@@ -9,6 +9,7 @@ Chạy lại sẽ bỏ qua những trang đã có kết quả (tiếp tục đư
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -35,6 +36,26 @@ def spec_fingerprint(adapter: str, params: dict, env: dict | None = None) -> str
     """Những gì ảnh hưởng tới kết quả của model. Không gồm `gpus` (chỉ là cách xếp lịch)."""
     blob = json.dumps({"adapter": adapter, "params": params, "env": env or {}}, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def shard_of(item_id: str, num_shards: int) -> int:
+    """Chia mẫu cố định theo hash của id: mỗi mẫu luôn thuộc đúng một phần, chạy lại vẫn vậy."""
+    return int(hashlib.sha256(item_id.encode("utf-8")).hexdigest()[:8], 16) % num_shards
+
+
+def _update_meta(meta_path: Path, update) -> None:
+    """Đọc–sửa–ghi meta.json dưới khóa file (nhiều phần cùng một model có thể kết thúc cùng lúc)."""
+    with open(meta_path, "a+", encoding="utf-8") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        fh.seek(0)
+        raw = fh.read()
+        meta = json.loads(raw) if raw.strip() else {"sessions": []}
+        update(meta)
+        fh.seek(0)
+        fh.truncate()
+        fh.write(json.dumps(meta, ensure_ascii=False, indent=2))
+        fh.flush()
+        fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 def run_dir(output_dir: Path, split: str, model: str) -> Path:
@@ -119,7 +140,10 @@ def run_model(
     limit: int | None = None,
     retry_errors: bool = False,
     per_category: int | None = None,
+    shard: int = 0,
+    num_shards: int = 1,
 ) -> int:
+    """shard/num_shards: chạy một phần số mẫu (vd. 2 tiến trình trên 2 GPU, mỗi tiến trình một nửa)."""
     cfg = load_config(config_path)
     items = load_manifest(cfg.dataset, split=split, categories=categories, limit=limit, per_category=per_category)
     out = run_dir(cfg.output_dir, split, spec.name)
@@ -147,16 +171,19 @@ def run_model(
     if retry_errors:
         done = {k: v for k, v in done.items() if not v.get("error")}
     todo = [it for it in items if it.id not in done]
-    print(f"[{spec.name}] {len(items)} mẫu, đã có {len(items) - len(todo)}, cần chạy {len(todo)}", flush=True)
+    tag = spec.name
+    if num_shards > 1:
+        todo = [it for it in todo if shard_of(it.id, num_shards) == shard]
+        tag = f"{spec.name}#{shard + 1}/{num_shards}"
+    print(f"[{tag}] {len(items)} mẫu, đã có {len(items) - len(done)}, phần này cần chạy {len(todo)}", flush=True)
     if not todo:
         return 0
 
     for k, v in spec.env.items():
         os.environ[k] = v
     data_fp = fingerprint(load_manifest(cfg.dataset))
-    meta["spec_hash"] = spec_hash
-    meta["dataset_fingerprint"] = data_fp
     session = {
+        "shard": f"{shard + 1}/{num_shards}",
         "dataset_fingerprint": data_fp,
         "env": spec.env,
         "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -175,7 +202,7 @@ def run_model(
         t0 = time.perf_counter()
         adapter.load()
         session["load_s"] = round(time.perf_counter() - t0, 1)
-        print(f"[{spec.name}] nạp model xong sau {session['load_s']}s", flush=True)
+        print(f"[{tag}] nạp model xong sau {session['load_s']}s", flush=True)
 
         consecutive_errors = 0
         n_errors = 0
@@ -199,13 +226,16 @@ def run_model(
                     n_errors += 1
                     traceback.print_exc()
                     _free_cuda_cache()
+                # khóa file: nhiều tiến trình (nhiều GPU) cùng ghi vào một predictions.jsonl
+                fcntl.flock(f, fcntl.LOCK_EX)
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 f.flush()
+                fcntl.flock(f, fcntl.LOCK_UN)
                 status = "LỖI " + rec["error"][:120] if rec["error"] else f"{rec['latency_s']:.2f}s"
-                print(f"[{spec.name}] {i}/{len(todo)} {it.id} {status}", flush=True)
+                print(f"[{tag}] {i}/{len(todo)} {it.id} {status}", flush=True)
                 if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                     print(
-                        f"[{spec.name}] DỪNG: {MAX_CONSECUTIVE_ERRORS} trang liên tiếp bị lỗi, "
+                        f"[{tag}] DỪNG: {MAX_CONSECUTIVE_ERRORS} trang liên tiếp bị lỗi, "
                         "nhiều khả năng cấu hình model sai. Xem log ở trên.",
                         flush=True,
                     )
@@ -213,14 +243,19 @@ def run_model(
                     break
         adapter.close()
     if n_errors:
-        print(f"[{spec.name}] {n_errors} mẫu bị lỗi; sửa xong chạy lại với --retry-errors", flush=True)
+        print(f"[{tag}] {n_errors} mẫu bị lỗi; sửa xong chạy lại với --retry-errors", flush=True)
         exit_code = exit_code or 1
 
     session["finished"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     session["peak_vram_mib"] = vram.peak_mib or None
-    meta["sessions"].append(session)
-    meta["peak_vram_mib"] = max((s.get("peak_vram_mib") or 0) for s in meta["sessions"]) or None
-    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+    def add_session(meta):
+        meta["spec_hash"] = spec_hash
+        meta["dataset_fingerprint"] = data_fp
+        meta.setdefault("sessions", []).append(session)
+        meta["peak_vram_mib"] = max((s.get("peak_vram_mib") or 0) for s in meta["sessions"]) or None
+
+    _update_meta(meta_path, add_session)
     return exit_code
 
 
@@ -239,10 +274,12 @@ def main(argv=None):
     ap.add_argument("--limit", type=int)
     ap.add_argument("--retry-errors", action="store_true")
     ap.add_argument("--per-category", type=int)
+    ap.add_argument("--shard", type=int, default=0)
+    ap.add_argument("--num-shards", type=int, default=1)
     a = ap.parse_args(argv)
     spec = load_config(a.config).model(a.model)
     cats = a.categories.split(",") if a.categories else None
-    sys.exit(run_model(a.config, spec, a.split, cats, a.limit, a.retry_errors, a.per_category))
+    sys.exit(run_model(a.config, spec, a.split, cats, a.limit, a.retry_errors, a.per_category, a.shard, a.num_shards))
 
 
 if __name__ == "__main__":

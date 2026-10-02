@@ -5,7 +5,9 @@ bằng cùng một cách chấm. Thiết kế để chạy trên Kaggle (GPU T4 
 
 - Mỗi model là một mục trong file YAML. Muốn thêm hoặc bớt model thì sửa config, không cần sửa code.
 - Mỗi model chạy trong **tiến trình riêng**: model chạy xong thì VRAM được trả hết, model lỗi không kéo model khác chết theo.
-- Với `--gpus 0,1`, **hai model chạy song song**, mỗi model một card.
+- Với `--gpus 0,1`: nhiều model thì **mỗi model một card, chạy song song**; chỉ một model mà model đó vừa 1 card thì
+  **tự nạp lên cả 2 card và chia đôi số mẫu** (nhanh ~2 lần; tắt bằng `--no-shard`). Hai tiến trình ghi chung một
+  file kết quả có khóa file, nên chấm điểm, status, khôi phục không đổi.
 - **Chạy tiếp được** khi bị ngắt giữa chừng: trang nào đã có kết quả thì bỏ qua.
 - Kết quả thô lưu riêng với phần chấm điểm, nên đổi cách chấm thì chỉ cần `ocrbench score`, không phải chạy lại model.
 - Holdout được khóa: phải thêm `--confirm-holdout` thì mới chạy hoặc chấm trên holdout.
