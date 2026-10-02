@@ -41,7 +41,8 @@ def decide(cfg, split: str, stage: str, models: list[str] | None = None, categor
     rows = {m: score_model(cfg, split, m, items) for m in models}
     out = {"stage": stage, "split": split, "max_unstable": max_unstable, "categories": {}}
     for cat in sorted({it.category for it in items}):
-        is_table = any(it.gt_type == "table_html" for it in items if it.category == cat)
+        # nhóm bảng = MỌI mẫu đều là bảng; nhóm trộn (vd. syn_degraded có lẫn hóa đơn) chấm bằng CER
+        is_table = all(it.gt_type == "table_html" for it in items if it.category == cat)
         entries, skipped = [], []
         for m in models:
             agg = aggregate([r for r in rows[m][0] if r["category"] == cat])

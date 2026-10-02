@@ -115,3 +115,21 @@ def test_clean_cache_only_after_push(goal_env, monkeypatch):
     push_status(load_config(cfg_path))
     assert _state(cfg_path, "oracle") == "ĐÃ LÊN GITHUB, CHƯA XÓA TRỌNG SỐ"
     assert "4.2G" in goal.clean_cache(load_config(cfg_path), "oracle") and deleted
+
+
+def test_mixed_category_scored_by_cer(goal_env):
+    """Nhóm trộn văn bản + bảng (như syn_degraded) phải chấm bằng CER, không bị coi là nhóm bảng."""
+    import json
+    project, cfg_path, _ = goal_env
+    m = project / "data/manifest.jsonl"
+    lines = [json.loads(x) for x in m.read_text().splitlines()]
+    for r in lines:
+        if r["category"] == "tables":
+            r["category"] = "printed_en"  # trộn 1 bảng vào nhóm văn bản
+    m.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in lines) + "\n")
+    goal.write_lock(load_config(cfg_path))
+    main(["run", "--config", cfg_path, "--models", "oracle", "--inline", "--no-score"])
+    bench = (project / "BENCHMARK.md")
+    write_benchmark(load_config(cfg_path))
+    row = next(x for x in bench.read_text(encoding="utf-8").splitlines() if x.startswith("| printed_en"))
+    assert "*" not in row.split("|")[1] and "0.0%" in row

@@ -26,7 +26,8 @@ def build_benchmark(cfg: Config) -> str:
     split = q["split"]
     items = load_manifest(cfg.dataset, split=split)
     cats = sorted({it.category for it in items})
-    table_cats = {it.category for it in items if it.gt_type == "table_html"}
+    # nhóm bảng = MỌI mẫu đều là bảng; nhóm trộn (vd. syn_degraded có lẫn hóa đơn) chấm bằng CER
+    table_cats = {c for c in cats if all(it.gt_type == "table_html" for it in items if it.category == c)}
     states, _ = evaluate(cfg)
     skips = load_skips(cfg)
 
@@ -51,7 +52,9 @@ def build_benchmark(cfg: Config) -> str:
                  and per_cat[c]["complete"] and per_cat[c]["cell_exact_mean"] is not None]
         overall = aggregate(all_rows) if all_rows else None
         vram = max((m.get("peak_vram_mib") or 0) for m in metas.values()) if metas else 0
-        rows.append(dict(name=st.name, state=st.state, used=used, per_cat=per_cat, overall=overall,
+        n_done = sum(per_cat[c]["n_scored"] for c in cats)
+        coverage = "đủ" if n_done == len(items) else f"{n_done}/{len(items)}"
+        rows.append(dict(name=st.name, state=coverage, used=used, per_cat=per_cat, overall=overall,
                          text=statistics.fmean(text_cers) if text_cers else None,
                          cells=statistics.fmean(cells) if cells else None, vram=vram,
                          variants=sorted(set(used.values()))))
@@ -66,7 +69,7 @@ def build_benchmark(cfg: Config) -> str:
          "## Bảng tổng hợp", "",
          "Xếp theo CER văn bản trung bình (trung bình các nhóm văn bản, mỗi nhóm nặng như nhau). "
          "Chỉ tính nhóm model đã chạy đủ mẫu.", "",
-         "| # | Model | Trạng thái | CER văn bản | Ô đúng (bảng) | Lặp/thừa | Lỗi | s/mẫu | VRAM đỉnh | Biến thể đã dùng |",
+         "| # | Model | Đã chạy | CER văn bản | Ô đúng (bảng) | Lặp/thừa | Lỗi/rỗng | s/mẫu | VRAM đỉnh | Biến thể đã dùng |",
          "|---:|---|---|---:|---:|---:|---:|---:|---:|---|"]
     for i, r in enumerate(rows, 1):
         o = r["overall"] or {}
@@ -80,7 +83,8 @@ def build_benchmark(cfg: Config) -> str:
 
     if rows:
         L += ["", "## Theo nhóm", "",
-              "Nhóm văn bản: CER ±95% (thấp = tốt). Nhóm bảng (`*`): ô đúng vị trí ±95% (cao = tốt). "
+              "Nhóm văn bản: CER ±95% (thấp = tốt). Nhóm bảng (`*`): ô đúng vị trí ±95% (cao = tốt), kèm CER của chữ "
+              "trong bảng (đọc đúng chữ nhưng không dựng lại được bảng thì ô đúng = 0% mà CER vẫn thấp). "
               "`—` = chưa chạy đủ.", "",
               "| Nhóm | " + " | ".join(r["name"] for r in rows) + " |", "|---|" + "---:|" * len(rows)]
         for c in cats:
@@ -91,7 +95,8 @@ def build_benchmark(cfg: Config) -> str:
                     cells.append("—")
                 elif c in table_cats:
                     ci = a["cell_exact_ci95"]
-                    cells.append(f"{_pct(a['cell_exact_mean'])}" + (f" ±{ci * 100:.1f}" if ci else ""))
+                    cells.append(f"{_pct(a['cell_exact_mean'])}" + (f" ±{ci * 100:.1f}" if ci else "")
+                                 + f" · CER {_pct(a['cer_mean'])}")
                 else:
                     ci = a["cer_ci95"]
                     cells.append(f"{_pct(a['cer_mean'])}" + (f" ±{ci * 100:.1f}" if ci else ""))

@@ -25,8 +25,9 @@ from .worker import load_predictions, run_dir, run_model
 STATUS_EVERY_S = 60
 
 
-def _count_done(path: Path) -> int:
-    return len(load_predictions(path))
+def _count_done(path: Path, ids: set[str] | None = None) -> int:
+    preds = load_predictions(path)
+    return len(preds) if ids is None else sum(1 for k in preds if k in ids)
 
 
 def run_all(
@@ -55,7 +56,9 @@ def run_all(
             safe_push(cfg, [], f"{s.name} kết thúc (mã {results[s.name]})")
         return results
 
-    total = len(load_manifest(cfg.dataset, split=split, categories=categories, limit=limit, per_category=per_category))
+    run_ids = {it.id for it in load_manifest(cfg.dataset, split=split, categories=categories, limit=limit,
+                                             per_category=per_category)}
+    total = len(run_ids)
     slots: list[str | None] = list(gpus) if gpus else [None]
     free = list(slots)
     queue = deque(specs)
@@ -112,7 +115,7 @@ def run_all(
                 free.extend(taken)
                 results[spec.name] = code
                 mins = (time.monotonic() - t0) / 60
-                done = _count_done(run_dir(cfg.output_dir, split, spec.name) / "predictions.jsonl")
+                done = _count_done(run_dir(cfg.output_dir, split, spec.name) / "predictions.jsonl", run_ids)
                 mark = "✔" if code == 0 else "✘"
                 print(f"{mark} {spec.name}: kết thúc (mã {code}) sau {mins:.1f} phút, {done}/{total} mẫu", flush=True)
                 if code != 0:
@@ -127,7 +130,7 @@ def run_all(
             if running and time.monotonic() - last_status >= STATUS_EVERY_S:
                 last_status = time.monotonic()
                 parts = [
-                    f"{s.name} {_count_done(run_dir(cfg.output_dir, split, s.name) / 'predictions.jsonl')}/{total}"
+                    f"{s.name} {_count_done(run_dir(cfg.output_dir, split, s.name) / 'predictions.jsonl', run_ids)}/{total}"
                     for s, *_ in running.values()
                 ]
                 print("… đang chạy: " + " | ".join(parts) + (f" | chờ: {len(queue)} model" if queue else ""), flush=True)
