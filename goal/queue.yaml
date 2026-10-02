@@ -10,13 +10,13 @@ max_skips: 3            # bỏ qua quá số này thì goal không đạt, agent
 max_error_rate: 0.01    # tỉ lệ mẫu lỗi tối đa để một model được coi là chạy xong
 
 queue:
-  - tesseract            # OCR truyền thống, CPU — mốc so sánh rẻ nhất
-  - easyocr
+  - tesseract            # OCR truyền thống, CPU — mốc so sánh rẻ nhất (đã xong)
+  - easyocr              # (đang chạy khi đổi thứ tự — giữ nguyên vị trí)
+  - sherif_handwriting   # ƯU TIÊN: Qwen2.5-VL-3B, chữ viết tay Ả Rập–Anh
+  - qari_0_4             # ƯU TIÊN: Qwen3-VL-4B + LoRA tiếng Ả Rập
+  - amad_vlm6            # ƯU TIÊN: 8,3 tỉ tham số — không vừa 1 T4 ở fp16
   - paddleocr_ar
   - paddleocr_vl         # VLM tài liệu ~0,9 tỉ tham số
   - baseer               # Qwen2-VL-2B fine-tune tiếng Ả Rập
-  - sherif_handwriting   # Qwen2.5-VL-3B, chữ viết tay Ả Rập–Anh
-  - qari_0_4             # Qwen3-VL-4B + LoRA tiếng Ả Rập
-  - amad_vlm6            # 8,3 tỉ tham số — không vừa 1 T4 ở fp16
   - hunyuan_ocr          # cần trust_remote_code; license riêng của Tencent
   - surya                # cần venv riêng
