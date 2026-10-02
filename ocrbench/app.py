@@ -43,7 +43,7 @@ def build_app(converter: Converter):
                 continue
             docx_files.append(str(res.docx))
             for p in res.pages:
-                rows.append([path.name, p.index, p.source, round(p.seconds, 1), p.error or ""])
+                rows.append([path.name, p.index, p.source, round(p.seconds, 1), p.error or p.note or ""])
             first = next((p for p in res.pages if p.text), None)
             if first:
                 previews.append(f"### {path.name} — trang {first.index} ({first.source})\n\n{first.text[:3000]}")
@@ -67,7 +67,7 @@ def build_app(converter: Converter):
             pages = gr.Textbox(label="Trang", placeholder="vd. 1-3,5 · để trống = tất cả")
         btn = gr.Button("Chuyển sang DOCX", variant="primary")
         out = gr.File(label="Tải DOCX", file_count="multiple")
-        table = gr.Dataframe(headers=["File", "Trang", "Nguồn", "Giây", "Lỗi"], label="Chi tiết từng trang",
+        table = gr.Dataframe(headers=["File", "Trang", "Nguồn", "Giây", "Lỗi / cần soát"], label="Chi tiết từng trang",
                              interactive=False, wrap=True)
         preview = gr.Markdown(label="Xem trước")
         btn.click(run, [files, use_text_layer, doc_type, pages], [out, table, preview])
@@ -75,10 +75,12 @@ def build_app(converter: Converter):
     return demo
 
 
-def serve(config: str, model: str, host: str = "127.0.0.1", port: int = 7860, share: bool = False, dpi: int = 200):
+def serve(config: str, model: str, host: str = "127.0.0.1", port: int = 7860, share: bool = False, dpi: int = 200,
+          params: dict | None = None, gpus: str | None = "auto"):
     print(f"Đang nạp model '{model}'...", flush=True)
-    converter = Converter(config, model, dpi=dpi)
-    print(f"Nạp xong sau {converter.load_s:.0f}s. Mở http://{host}:{port}", flush=True)
+    converter = Converter(config, model, dpi=dpi, params=params, gpus=gpus)
+    where = f"{len(converter.adapters)} GPU" if converter.devices else "thiết bị mặc định"
+    print(f"Nạp xong sau {converter.load_s:.0f}s ({where}, batch {converter.batch}). Mở http://{host}:{port}", flush=True)
     import gradio as gr
 
     build_app(converter).launch(server_name=host, server_port=port, share=share, css=CSS,

@@ -51,6 +51,10 @@ class Adapter:
                     extra[k] = extra.get(k, 0) + v
         return Prediction("\n\n".join(p.text for p in preds), (sum(confs) / len(confs)) if confs else None, extra)
 
+    def predict_batch(self, images: list[Image.Image], items: list[Item]) -> list[Prediction]:
+        """Nhiều trang độc lập trong một lượt. Mặc định: lần lượt từng trang; VLM ghi đè để chạy batch thật."""
+        return [self.predict(im, it) for im, it in zip(images, items)]
+
     def close(self) -> None:
         """Giải phóng tài nguyên (tùy chọn)."""
 

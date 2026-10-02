@@ -121,6 +121,24 @@ ocrbench convert --config config.yaml --model <tên model> a.pdf b.pdf -o docx_o
 - Giao diện xử lý lần lượt từng yêu cầu (một GPU). Nếu benchmark đang chiếm GPU thì phải dừng benchmark trước, hoặc
   chạy giao diện ở phiên Kaggle khác.
 
+### Tối ưu tốc độ khi triển khai
+
+```bash
+# 1) đo tốc độ + CER của các cấu hình trên ~40 trang dev (khoảng 20–30 phút trên 2×T4)
+ocrbench speedtest --config C --model sherif_handwriting --per-category 3
+# 2) chạy giao diện với cấu hình đã chọn
+ocrbench serve --config C --model sherif_handwriting --set max_new_tokens=4096 --set batch_size=4 --set stop_on_loop=true
+```
+
+- **Mỗi GPU một bản model** (model vừa 1 GPU): trang được chia cho các GPU (`--gpus auto`, mặc định).
+- **`batch_size`**: nhiều trang chung một lượt sinh token (T4 bị giới hạn bởi băng thông bộ nhớ nên batch gần như "miễn
+  phí"); kết quả giống hệt chạy từng trang. Batch lỗi (vd. hết VRAM) tự chạy lại từng trang.
+- **`stop_on_loop`**: dừng sớm trang bị model lặp vòng (thay vì chạy hết max_new_tokens); trang đó được ghi
+  "⚠ CẦN SOÁT" trong DOCX và giao diện, cùng với trang bị cắt do hết `max_new_tokens`.
+- **`max_pixels`**: giới hạn độ phân giải ảnh đưa vào VLM — nhanh hơn nhưng có thể đọc sai chữ nhỏ; chỉ dùng nếu
+  speedtest cho thấy CER không tăng.
+- Các tùy chọn này mặc định TẮT, nên benchmark không bị ảnh hưởng.
+
 ## 3. Chỉ số
 
 | Chỉ số | Ý nghĩa |

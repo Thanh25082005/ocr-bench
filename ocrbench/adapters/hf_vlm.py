@@ -49,6 +49,11 @@ class HFVLMAdapter(Adapter):
         # tài liệu nhiều trang: "joint" = mọi trang trong MỘT lần gọi (model phải giữ ngữ cảnh qua các trang,
         # vd. nhớ tiêu đề cột ở trang 1 khi đọc tiếp bảng ở trang 2); "per_page" = đọc từng trang rồi ghép
         "multi_page": "joint",
+        # --- tối ưu tốc độ (dùng cho triển khai; mặc định TẮT để benchmark giữ nguyên cách chạy) ---
+        "batch_size": 1,          # số trang chạy chung một lượt sinh token (predict_batch); T4 + model ~3B: thử 4
+        "stop_on_loop": False,    # dừng sinh khi phát hiện vòng lặp (đoạn ≤ loop_max_period token lặp liên tiếp)
+        "loop_max_period": 60,
+        "loop_min_span": 240,     # vòng lặp phải dài ít nhất chừng này token mới dừng (tránh cắt nhầm bảng nhiều ô trống)
     }
 
     def load(self):
@@ -124,6 +129,22 @@ class HFVLMAdapter(Adapter):
     def predict(self, image, item):
         return self._generate([image], item)
 
+    def predict_batch(self, images, items):
+        """Nhiều trang độc lập, MỘT lượt generate (đệm trái). Chỉ hỗ trợ input_mode=processor."""
+        p = self.params
+        if len(images) == 1 or p["input_mode"] != "processor":
+            return [self._generate([im], it) for im, it in zip(images, items)]
+        torch = self._torch
+        texts = [self._processor.apply_chat_template(self._messages(it, [None], embed_images=False),
+                                                     add_generation_prompt=True, tokenize=False) for it in items]
+        tok = getattr(self._processor, "tokenizer", self._processor)
+        old_side, tok.padding_side = tok.padding_side, "left"
+        try:
+            inputs = self._processor(text=texts, images=list(images), return_tensors="pt", padding=True)
+        finally:
+            tok.padding_side = old_side
+        return self._run(inputs, n_rows=len(images))
+
     def predict_pages(self, images, item):
         if self.params["multi_page"] == "per_page":
             return super().predict_pages(images, item)
@@ -146,22 +167,77 @@ class HFVLMAdapter(Adapter):
                 self._messages(item, images, embed_images=False), add_generation_prompt=True, tokenize=False
             )
             inputs = self._processor(text=[text], images=list(images), return_tensors="pt")
+        return self._run(inputs, n_rows=1)[0]
+
+    def _run(self, inputs, n_rows: int):
+        torch, p = self._torch, self.params
         inputs = inputs.to(self._model.device)
         for k, v in inputs.items():
             if torch.is_tensor(v) and v.is_floating_point():
                 inputs[k] = v.to(self._dtype)
-
+        start = inputs["input_ids"].shape[1]
+        tok = getattr(self._processor, "tokenizer", self._processor)
         gen = {"max_new_tokens": p["max_new_tokens"], "do_sample": False, **p["generation_kwargs"]}
+        if n_rows > 1 and tok.pad_token_id is not None:
+            gen.setdefault("pad_token_id", tok.pad_token_id)
+        loop = None
+        if p["stop_on_loop"]:
+            from transformers import StoppingCriteria, StoppingCriteriaList
+
+            loop = _LoopStop(torch, start, n_rows, p["loop_max_period"], p["loop_min_span"])
+
+            class _Wrap(StoppingCriteria):
+                def __call__(self, input_ids, scores, **kw):
+                    return loop(input_ids, scores)
+
+            gen["stopping_criteria"] = StoppingCriteriaList([_Wrap()])
         with torch.inference_mode():
             out = self._model.generate(**inputs, **gen)
-        new_tokens = out[:, inputs["input_ids"].shape[1] :]
-        text = self._processor.batch_decode(new_tokens, skip_special_tokens=True)[0]
-        n_new = int(new_tokens.shape[1])
-        return Prediction(
-            self.postprocess(text),
-            extra={"new_tokens": n_new, "hit_max_tokens": n_new >= p["max_new_tokens"]},
-        )
+        new_tokens = out[:, start:]
+        texts = self._processor.batch_decode(new_tokens, skip_special_tokens=True)
+        stop_ids = {i for i in (tok.pad_token_id, tok.eos_token_id) if i is not None}
+        preds = []
+        for r in range(n_rows):
+            row = new_tokens[r].tolist()
+            n_new = next((i for i, t in enumerate(row) if t in stop_ids), len(row))
+            extra = {"new_tokens": n_new, "hit_max_tokens": n_new >= p["max_new_tokens"]}
+            if loop is not None and loop.stopped[r]:
+                extra["stopped_loop"] = True  # trang đã bị lặp: kết quả cần người duyệt
+            preds.append(Prediction(self.postprocess(texts[r]), extra=extra))
+        return preds
 
     def close(self):
         del self._model
         self._torch.cuda.empty_cache()
+
+
+class _LoopStop:
+    """Dừng sinh token cho từng dòng của batch khi đuôi kết quả là một đoạn ngắn (≤ max_period token) lặp liên tiếp,
+    tổng dài ≥ min_span token. Trang như vậy đã hỏng; dừng sớm tiết kiệm hàng nghìn token vô ích."""
+
+    def __init__(self, torch, start: int, n_rows: int, max_period: int, min_span: int, every: int = 16):
+        self.torch, self.start, self.max_period, self.min_span, self.every = torch, start, max_period, min_span, every
+        self.stopped = [False] * n_rows
+        self.calls = 0
+
+    def __call__(self, input_ids, scores, **kwargs):
+        torch = self.torch
+        self.calls += 1
+        done = torch.tensor(self.stopped, device=input_ids.device)
+        gen = input_ids[:, self.start:]
+        if self.calls % self.every or gen.shape[1] < self.min_span:
+            return done
+        tail = gen[:, -max(self.min_span, 2 * self.max_period):].tolist()
+        for r, t in enumerate(tail):
+            if self.stopped[r]:
+                continue
+            for period in range(1, self.max_period + 1):
+                reps = -(-self.min_span // period)  # làm tròn lên
+                span = period * reps
+                if span > len(t):
+                    break
+                seg = t[-span:]
+                if seg == seg[:period] * reps:
+                    self.stopped[r] = True
+                    break
+        return torch.tensor(self.stopped, device=input_ids.device)

@@ -133,3 +133,39 @@ def test_gradio_app_builds(converter):
 
     demo = build_app(converter)
     assert demo is not None
+
+
+def test_parse_variant_and_merge():
+    from ocrbench.convert import merge_params
+    from ocrbench.speedtest import parse_variant
+
+    p = parse_variant("max_new_tokens=4096,batch_size=4,stop_on_loop=true,max_pixels=1600000")
+    assert p == {"max_new_tokens": 4096, "batch_size": 4, "stop_on_loop": True,
+                 "processor_kwargs": {"max_pixels": 1600000}}
+    merged = merge_params({"prompt": "x", "processor_kwargs": {"min_pixels": 1}}, p)
+    assert merged["processor_kwargs"] == {"min_pixels": 1, "max_pixels": 1600000} and merged["prompt"] == "x"
+
+
+class FlakyBatch(Adapter):
+    """Batch nhiều trang thì lỗi (giả lập hết VRAM), từng trang thì được."""
+
+    def predict(self, image, item):
+        return Prediction(f"ok {item.id}", extra={"stopped_loop": item.id.endswith("p2")})
+
+    def predict_batch(self, images, items):
+        if len(images) > 1:
+            raise RuntimeError("CUDA out of memory (giả lập)")
+        return [self.predict(images[0], items[0])]
+
+
+def test_batch_failure_falls_back_per_page(tmp_path):
+    (tmp_path / "m.jsonl").write_text("")
+    (tmp_path / "c.yaml").write_text(yaml.safe_dump({"dataset": "m.jsonl", "models": [
+        {"name": "flaky", "adapter": "tests.test_app:FlakyBatch", "params": {"batch_size": 3}}]}))
+    conv = Converter(tmp_path / "c.yaml", "flaky")
+    _scan_pdf(tmp_path / "s.pdf", n=4)
+    res = conv.convert_file(tmp_path / "s.pdf", tmp_path / "o")
+    assert [p.index for p in res.pages] == [1, 2, 3, 4] and all(p.source == "OCR" for p in res.pages)
+    assert conv.fallbacks >= 1
+    assert res.pages[1].note == "model bị lặp, đã dừng sớm"
+    assert "CẦN SOÁT" in Document(res.docx).element.xml

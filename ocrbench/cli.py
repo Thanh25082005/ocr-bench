@@ -160,7 +160,7 @@ def cmd_clean_cache(a):
 def cmd_convert(a):
     from .convert import Converter
 
-    conv = Converter(a.config, a.model, dpi=a.dpi)
+    conv = Converter(a.config, a.model, dpi=a.dpi, params=_params(a.set), gpus=a.gpus)
     for f in a.inputs:
         res = conv.convert_file(f, a.output, force_ocr=a.force_ocr, pages=a.pages, doc_type=a.doc_type,
                                 progress=lambda k, n, msg: print(f"  {msg} ({k + 1}/{n})", flush=True))
@@ -173,7 +173,23 @@ def cmd_convert(a):
 def cmd_serve(a):
     from .app import serve
 
-    serve(a.config, a.model, host=a.host, port=a.port, share=a.share, dpi=a.dpi)
+    serve(a.config, a.model, host=a.host, port=a.port, share=a.share, dpi=a.dpi,
+          params=_params(a.set), gpus=a.gpus)
+
+
+def _params(sets):
+    from .speedtest import parse_variant
+
+    return parse_variant(",".join(sets)) if sets else None
+
+
+def cmd_speedtest(a):
+    from .speedtest import DEFAULT_VARIANTS, run_speedtest
+
+    cfg = load_config(a.config)
+    out = cfg.work_dir / f"speedtest_{a.model}.md"
+    print("\n" + run_speedtest(a.config, a.model, a.variant or DEFAULT_VARIANTS, a.per_category, a.gpus, out))
+    print(f"\nĐã ghi {out}")
 
 
 def cmd_run(a):
@@ -263,6 +279,8 @@ def main(argv=None):
     p.add_argument("--pages", help="vd. 1-3,5")
     p.add_argument("--doc-type", choices=["text", "table"], default="text")
     p.add_argument("--dpi", type=int, default=200)
+    p.add_argument("--set", action="append", help="ghi đè tham số model, vd. --set batch_size=4 --set stop_on_loop=true")
+    p.add_argument("--gpus", default="auto", help="auto = mọi GPU (một bản model mỗi GPU); vd. 0 hoặc 0,1")
     p.set_defaults(func=cmd_convert)
 
     p = sub.add_parser("serve", help="giao diện web: kéo thả PDF/ảnh → tải DOCX")
@@ -272,7 +290,18 @@ def main(argv=None):
     p.add_argument("--port", type=int, default=7860)
     p.add_argument("--share", action="store_true", help="tạo link công khai của Gradio (KHÔNG dùng với tài liệu mật)")
     p.add_argument("--dpi", type=int, default=200)
+    p.add_argument("--set", action="append", help="ghi đè tham số model, vd. --set batch_size=4 --set stop_on_loop=true")
+    p.add_argument("--gpus", default="auto", help="auto = mọi GPU (một bản model mỗi GPU); vd. 0 hoặc 0,1")
     p.set_defaults(func=cmd_serve)
+
+    p = sub.add_parser("speedtest", help="đo tốc độ + độ chính xác của các cấu hình tối ưu (chọn cấu hình triển khai)")
+    p.add_argument("--config", required=True)
+    p.add_argument("--model", required=True)
+    p.add_argument("--variant", action="append",
+                   help="vd. 'max_new_tokens=4096,batch_size=4,stop_on_loop=true' (lặp lại để thêm biến thể)")
+    p.add_argument("--per-category", type=int, default=3)
+    p.add_argument("--gpus", default="auto")
+    p.set_defaults(func=cmd_speedtest)
 
     p = sub.add_parser("benchmark", help="sinh BENCHMARK.md: bảng xếp hạng các model trong hàng đợi /goal")
     p.add_argument("--config", required=True)

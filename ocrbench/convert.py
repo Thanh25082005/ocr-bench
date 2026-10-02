@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import queue
+import threading
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -34,6 +36,7 @@ class PageResult:
     text: str
     seconds: float
     error: str | None = None
+    note: str | None = None  # vd. "bị cắt", "model bị lặp" → người duyệt cần soát trang này
 
 
 @dataclass
@@ -58,17 +61,56 @@ def parse_pages(spec: str | None, n_pages: int) -> list[int]:
 
 
 class Converter:
-    def __init__(self, config_path: str | Path, model: str, dpi: int = 200, min_text_chars: int = 30):
+    """Nạp model (một bản trên MỖI GPU nếu model vừa 1 GPU) và chuyển file.
+
+    params: ghi đè tham số model trong config, vd. {"batch_size": 4, "stop_on_loop": True, "max_new_tokens": 4096}.
+    gpus: "auto" = mọi GPU thấy được; "0" / "0,1" = chỉ các GPU này; None = để model tự chọn (1 bản).
+    """
+
+    def __init__(self, config_path: str | Path, model: str, dpi: int = 200, min_text_chars: int = 30,
+                 params: dict | None = None, gpus: str | None = "auto"):
         cfg = load_config(config_path)
         self.spec = cfg.model(model)
         self.model = model
         self.dpi = dpi
         self.min_text_chars = min_text_chars
-        self.adapter = create_adapter(self.spec.adapter, self.spec.params)
-        self.max_side = self.spec.params.get("max_image_side")
+        self.params = merge_params(self.spec.params, params or {})
+        self.batch = max(1, int(self.params.get("batch_size", 1)))
+        self.max_side = self.params.get("max_image_side")
+        devices = self._devices(gpus)
+        if len(devices) > 1:
+            self.adapters = [create_adapter(self.spec.adapter, {**self.params, "device_map": {"": f"cuda:{d}"}})
+                             for d in devices]
+        else:
+            self.adapters = [create_adapter(self.spec.adapter, self.params)]
+        self.devices = devices
+        self.fallbacks = 0  # số batch lỗi (vd. hết VRAM) phải chạy lại từng trang
         t = time.perf_counter()
-        self.adapter.load()
+        for a in self.adapters:
+            a.load()
         self.load_s = time.perf_counter() - t
+
+    @property
+    def adapter(self):
+        return self.adapters[0]
+
+    def _devices(self, gpus) -> list[int]:
+        if gpus is None or self.spec.adapter != "hf_vlm" or self.spec.gpus > 1 or self.params.get("quantization"):
+            return []
+        try:
+            import torch
+        except ImportError:
+            return []
+        n = torch.cuda.device_count()
+        if n == 0:
+            return []
+        if gpus == "auto":
+            return list(range(n))
+        return [int(x) for x in str(gpus).split(",") if x.strip() != "" and int(x) < n]
+
+    def close(self):
+        for a in self.adapters:
+            a.close()
 
     # --- đọc trang ---
     def _open(self, path: Path, pages: str | None):
@@ -96,12 +138,11 @@ class Converter:
             entries.append((n, render, text_layer))
         return entries, pdf.close
 
-    def _ocr(self, image: Image.Image, path: Path, n: int, doc_type: str) -> str:
+    def _prepare(self, image: Image.Image, path: Path, n: int, doc_type: str):
         if self.max_side and max(image.size) > self.max_side:
             image.thumbnail((self.max_side, self.max_side), Image.LANCZOS)
         gt_type = DOC_TYPES.get(doc_type, "text")
-        item = Item(id=f"{path.name}#p{n}", image=path, category=f"app_{doc_type}", gt="", gt_type=gt_type)
-        return self.adapter.predict(image, item).text
+        return image, Item(id=f"{path.name}#p{n}", image=path, category=f"app_{doc_type}", gt="", gt_type=gt_type)
 
     def convert_file(self, path: str | Path, out_dir: str | Path, force_ocr: bool = False, pages: str | None = None,
                      doc_type: str = "text", progress=None) -> FileResult:
@@ -116,23 +157,97 @@ class Converter:
         doc = new_document(title=path.stem)
         for i, pr in enumerate(result.pages):
             src = pr.source if pr.source != "OCR" else f"OCR · model {self.model}"
-            header = f"Trang {pr.index} — nguồn: {src}" + (f" — LỖI: {pr.error}" if pr.error else "")
+            header = (f"Trang {pr.index} — nguồn: {src}" + (f" — LỖI: {pr.error}" if pr.error else "")
+                      + (f" — ⚠ CẦN SOÁT: {pr.note}" if pr.note else ""))
             add_page(doc, pr.text, header=header, first=(i == 0))
         result.docx = out_dir / f"{path.stem}.docx"
         doc.save(result.docx)
         return result
 
     def _convert_pages(self, path, page_list, result, force_ocr, doc_type, progress):
+        """Trang có lớp chữ dùng được → lấy luôn; trang còn lại gom thành batch, chia cho các GPU chạy song song."""
+        slots: list[PageResult | None] = [None] * len(page_list)
+        todo = []  # (vị trí, số trang, hàm dựng ảnh)
         for k, (n, render, text_layer) in enumerate(page_list):
-            if progress:
-                progress(k, len(page_list), f"{path.name}: trang {n}")
-            t = time.perf_counter()
             layer = unicodedata.normalize("NFKC", text_layer).strip()  # gộp dạng trình bày của chữ Ả Rập
-            try:
-                if not force_ocr and len(layer) >= self.min_text_chars and not _ARABIC.search(layer):
-                    result.pages.append(PageResult(n, "lớp chữ PDF", layer, time.perf_counter() - t))
-                else:
-                    text = self._ocr(render(), path, n, doc_type)
-                    result.pages.append(PageResult(n, "OCR", text, time.perf_counter() - t))
-            except Exception as e:  # một trang lỗi không làm hỏng cả file
-                result.pages.append(PageResult(n, "lỗi", "", time.perf_counter() - t, f"{type(e).__name__}: {e}"))
+            if not force_ocr and len(layer) >= self.min_text_chars and not _ARABIC.search(layer):
+                slots[k] = PageResult(n, "lớp chữ PDF", layer, 0.0)
+            else:
+                todo.append((k, n, render))
+        done = len(page_list) - len(todo)
+        window = len(self.adapters) * self.batch * 2  # dựng ảnh theo từng đợt để không giữ cả file trong RAM
+        for w in range(0, len(todo), window):
+            part = todo[w:w + window]
+            if progress:
+                progress(done, len(page_list), f"{path.name}: OCR trang {part[0][1]}–{part[-1][1]}")
+            ready = []
+            for k, n, render in part:  # pdfium không an toàn đa luồng: dựng ảnh ở luồng chính
+                try:
+                    img, item = self._prepare(render(), path, n, doc_type)
+                    ready.append((k, n, img, item))
+                except Exception as e:
+                    slots[k] = PageResult(n, "lỗi", "", 0.0, f"{type(e).__name__}: {e}")
+            batches = [ready[i:i + self.batch] for i in range(0, len(ready), self.batch)]
+            for k, res in self._run_batches(batches):
+                slots[k] = res
+            done += len(part)
+        result.pages.extend(slots)
+
+    def _run_batches(self, batches):
+        """Mỗi GPU một luồng, lấy batch từ hàng đợi chung. Batch lỗi thì thử lại từng trang để cô lập trang hỏng."""
+        jobs: queue.Queue = queue.Queue()
+        for b in batches:
+            jobs.put(b)
+        out, lock = [], threading.Lock()
+
+        def worker(adapter):
+            while True:
+                try:
+                    b = jobs.get_nowait()
+                except queue.Empty:
+                    return
+                t = time.perf_counter()
+                try:
+                    preds = adapter.predict_batch([x[2] for x in b], [x[3] for x in b])
+                    per = (time.perf_counter() - t) / len(b)
+                    rows = [(k, _page_result(n, p, per)) for (k, n, _, _), p in zip(b, preds)]
+                except Exception as batch_err:
+                    with lock:
+                        self.fallbacks += 1
+                        if self.fallbacks == 1:
+                            print(f"⚠ batch {len(b)} trang lỗi ({type(batch_err).__name__}: {str(batch_err)[:200]}); "
+                                  "chạy lại từng trang. Nếu là hết VRAM, giảm batch_size.", flush=True)
+                    rows = []
+                    for k, n, img, item in b:
+                        t1 = time.perf_counter()
+                        try:
+                            rows.append((k, _page_result(n, adapter.predict(img, item), time.perf_counter() - t1)))
+                        except Exception as e:
+                            rows.append((k, PageResult(n, "lỗi", "", time.perf_counter() - t1,
+                                                       f"{type(e).__name__}: {e}")))
+                with lock:
+                    out.extend(rows)
+
+        threads = [threading.Thread(target=worker, args=(a,), daemon=True) for a in self.adapters]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+        return out
+
+
+def _page_result(n: int, pred, seconds: float) -> PageResult:
+    notes = []
+    if pred.extra.get("stopped_loop"):
+        notes.append("model bị lặp, đã dừng sớm")
+    if pred.extra.get("hit_max_tokens"):
+        notes.append("bị cắt do hết max_new_tokens")
+    return PageResult(n, "OCR", pred.text, seconds, note="; ".join(notes) or None)
+
+
+def merge_params(base: dict, override: dict) -> dict:
+    """Ghi đè tham số; riêng các dict con (processor_kwargs, generation_kwargs...) thì gộp."""
+    out = dict(base)
+    for k, v in override.items():
+        out[k] = {**out.get(k, {}), **v} if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
