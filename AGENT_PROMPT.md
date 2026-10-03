@@ -160,8 +160,9 @@ mkdir -p WORK/reports && cp -r OUT/dev/_report WORK/reports/phase2_screening
 
 Chỉ xét những model **có tên trong danh sách chung kết của ít nhất một nhóm** ở giai đoạn 2.
 
-1. Với mỗi model đó, tạo mục mới `<model>__sl__long`: giữ nguyên mọi thứ của mục gốc, đặt `max_new_tokens: 8192`,
-   thêm `stop_on_loop: true` (chỉ với adapter `hf_vlm`). **CẤM** thêm `max_pixels` / `max_image_side`.
+1. Với mỗi model đó, tạo mục mới `<model>__pp__long`: giữ nguyên mọi thứ của mục gốc, đặt `max_new_tokens: 8192`,
+   thêm `stop_on_loop: true` và `multi_page: per_page` (chỉ với adapter `hf_vlm`). **CẤM** thêm `max_pixels` /
+   `max_image_side`.
 2. Chạy `ocrbench vram --config C --long --models <model>__long`, rồi xử lý theo mục 6 nếu không vừa.
 3. Chạy:
 

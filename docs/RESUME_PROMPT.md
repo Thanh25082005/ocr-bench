@@ -62,13 +62,13 @@ Hành vi tự động của tool (bạn không cần làm tay):
 - Model vừa 1 GPU + `--gpus 0,1` → **tự chia mẫu cho 2 GPU** (dòng `⇉ ... chia mẫu cho 2 GPU`).
 - Đổi tham số của model đã có kết quả mà giữ tên cũ → tool **từ chối chạy** (mã 3). Muốn cấu hình khác: tên mới.
 
-## 4. Trạng thái tại thời điểm viết file này (2026-10-03)
+## 4. Trạng thái tại thời điểm viết file này (2026-10-03 11:30 UTC)
 
 | # | Model | Trạng thái | Ghi chú |
 |---:|---|---|---|
 | 1 | tesseract | ✔ xong | CER văn bản 30%, không đọc được chữ viết tay |
 | 2 | easyocr | ✔ xong | CER văn bản 33% |
-| 3 | sherif_handwriting | nhóm thường ✔ 923/923 · **tài liệu dài 1/24** | Đứng đầu (CER văn bản 15,7%; chữ viết tay 7–11%). Tài liệu dài nhiều trang hay **lặp vòng** → biến thể mới có `stop_on_loop` |
+| 3 | sherif_handwriting | nhóm thường ✔ 923/923 · tài liệu dài: chạy lại đọc từng trang | Đứng đầu (CER văn bản 15,7%; chữ viết tay 7–11%). Đọc cả tài liệu một lượt: 5/24 hết VRAM, 3/24 bị cắt ở 8192 token |
 | 4 | qari_0_4 | chưa chạy | Qwen3-VL-4B + LoRA |
 | 5 | amad_vlm6 | chưa chạy | 8,3 tỉ tham số, cần 2 GPU |
 | 6–10 | paddleocr_ar, paddleocr_vl, baseer, hunyuan_ocr, surya | chưa chạy | |
@@ -111,10 +111,11 @@ mục 7 bằng biến thể mới `M__fix1`/`M__fix2`/`M__fix3`; hết bộ nh�
 **C. Nhóm thường đầy đủ:** `ocrbench run --config C --models V --categories <nhóm thường> --gpus 0,1`, rồi `goal-check`.
 
 **D. Tài liệu dài — CHỈ 12 mẫu cố định mỗi nhóm (BẮT BUỘC `--per-category 12`):**
-- Adapter `hf_vlm`: tạo mục `V__sl__long` = chép mục `V`, đặt `max_new_tokens: 8192`, `stop_on_loop: true`.
-  **CẤM** `max_pixels`, `max_image_side`. `ocrbench vram --config C --models V__sl__long --long` → chép mục nó in ra nếu
-  có (tên vẫn phải kết thúc bằng `__long`). Chạy:
-  `ocrbench run --config C --models <biến thể long> --categories syn_longtable,syn_longtext --per-category 12 --gpus 0,1`
+- Adapter `hf_vlm`: tạo mục `V__pp__long` = chép mục `V` (giữ `gpus`), đặt `max_new_tokens: 8192`,
+  `stop_on_loop: true`, `multi_page: per_page` (đọc từng trang ở độ phân giải đầy đủ rồi nối — đọc cả tài liệu một
+  lượt thì tràn VRAM). **CẤM** `max_pixels`, `max_image_side`. Chạy:
+  `ocrbench run --config C --models V__pp__long --categories syn_longtable,syn_longtext --per-category 12 --gpus 0,1`
+  Có mẫu `OutOfMemoryError` → biến thể `V__pp2g__long` (như trên + `gpus: 2`), chạy lại cả 24 mẫu. Vẫn hết → DỪNG hỏi.
 - Adapter khác: `ocrbench run --config C --models V --categories syn_longtable,syn_longtext --per-category 12 --gpus 0,1`
 
 **E. Ghi benchmark (làm liền, không chen việc khác):** `ocrbench benchmark --config C` → ghi nhật ký (chép nguyên văn
@@ -129,7 +130,7 @@ dòng của `M` trong bảng tổng hợp) → `ocrbench status --config C --pus
 
 | Model | Ghi chú |
 |---|---|
-| **sherif_handwriting** (đang dở) | Nhóm thường đã xong. Đặt `enabled: false` cho biến thể cũ `sherif_handwriting__long` (không có stop_on_loop, CẤM chạy tiếp). Tạo `sherif_handwriting__sl__long` theo bước D. vram có thể đề xuất chia 2 GPU (`gpus: 2`) cho tài liệu dài — làm theo. Ước ~1–2 giờ cho 24 tài liệu. Rồi E, F. |
+| **sherif_handwriting** (đang dở) | Nhóm thường đã xong. Biến thể `sherif_handwriting__sl__long` (đọc cả tài liệu một lượt) đã chạy 24/24 nhưng **5 mẫu hết VRAM** ở bước prefill → đặt `enabled: false` cho nó và cho `sherif_handwriting__long`, KHÔNG xóa kết quả. Tạo `sherif_handwriting__pp__long` theo bước D (chép mục `sherif_handwriting`, giữ `gpus: 1` → tool tự chia 2 GPU). Ước ~1 giờ. Rồi E, F. |
 | **qari_0_4** | `hf_vlm`, Qwen3-VL-4B + LoRA (`adapter_id`). Lỗi nạp model nhắc `qwen3_vl` / model type không hỗ trợ → được chạy ĐÚNG MỘT lệnh `python -m pip install -q -U "transformers>=4.57"` rồi thử lại (cấm đụng torch/CUDA). Model này hay lặp vòng: đo nguyên cấu hình gốc, KHÔNG tự thêm repetition_penalty. Ước 4–5 giờ. |
 | **amad_vlm6** | 8,3 tỉ tham số, không vừa 1 T4: dùng mục `amad_vlm6__2gpu` mà vram in ra (bậc B). Hết bộ nhớ ở bậc B → DỪNG và hỏi (bậc C trở đi giảm độ chính xác). Không chia mẫu cho 2 GPU được (1 bản model chiếm cả 2 card) → chậm, ước 6–10 giờ. Mục `amad_vlm6_4bit` trong config KHÔNG thuộc hàng đợi — để nguyên `enabled` như cũ, không chạy. |
 | **paddleocr_ar** | Cần cài trước: `python -m pip install -q "paddleocr>=3.3"`. Config dùng `engine: transformers` (không cần paddlepaddle-gpu). Xung đột thư viện → venv riêng theo README mục 4. |

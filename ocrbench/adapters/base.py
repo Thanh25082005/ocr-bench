@@ -45,7 +45,7 @@ class Adapter:
         extra = {"pages": len(images), "page_mode": "per_page"}
         for p in preds:
             for k, v in p.extra.items():
-                if k == "hit_max_tokens":
+                if k in ("hit_max_tokens", "stopped_loop"):
                     extra[k] = extra.get(k, False) or v
                 elif k == "new_tokens":
                     extra[k] = extra.get(k, 0) + v

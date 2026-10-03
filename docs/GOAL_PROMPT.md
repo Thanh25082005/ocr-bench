@@ -100,15 +100,18 @@ ocrbench goal-check --config C
 `goal/queue.yaml` đặt `long_per_category: 12`: mọi model chỉ chấm **cùng 24 tài liệu dài** (đủ 128 tài liệu thì một
 VLM cần khoảng 20 giờ). Lệnh run PHẢI có `--per-category 12`, không có thì sẽ chạy cả 128.
 
-- **Adapter `hf_vlm`:** tạo mục mới tên `V__sl__long`: chép nguyên mục `V`, đặt `max_new_tokens: 8192` và
-  `stop_on_loop: true` (dừng sớm khi model lặp vòng; mẫu lặp vốn đã sai, nên kết quả mẫu đúng không đổi).
-  **CẤM** thêm `max_pixels` / `max_image_side` (giảm độ phân giải = đánh đổi độ chính xác). Chạy
-  `ocrbench vram --config C --models V__sl__long --long`, xử lý theo AGENT_PROMPT mục 6 nếu không vừa (tên biến thể
-  vẫn phải **kết thúc bằng `__long`**). Rồi:
+- **Adapter `hf_vlm`:** tạo mục mới tên `V__pp__long`: chép nguyên mục `V` (giữ cả `gpus`), đặt
+  `max_new_tokens: 8192`, `stop_on_loop: true` và `multi_page: per_page` (đọc **từng trang riêng ở độ phân giải đầy
+  đủ** rồi nối lại, đúng như giao diện PDF→DOCX làm; đọc cả 3 trang một lượt thì tràn VRAM T4 ở bước prefill).
+  **CẤM** thêm `max_pixels` / `max_image_side` (giảm độ phân giải = đánh đổi độ chính xác). KHÔNG dùng `--long` của
+  `ocrbench vram` cho biến thể này (nó ước lượng cho kiểu đọc cả tài liệu một lượt). Chạy:
 
 ```bash
-ocrbench run --config C --models V__sl__long --categories syn_longtable,syn_longtext --per-category 12 --gpus 0,1
+ocrbench run --config C --models V__pp__long --categories syn_longtable,syn_longtext --per-category 12 --gpus 0,1
 ```
+
+  Có mẫu lỗi `OutOfMemoryError` → tạo `V__pp2g__long` = như trên nhưng `gpus: 2` (bậc B) rồi chạy lại cả 24 mẫu với
+  tên mới. Vẫn hết bộ nhớ → DỪNG và hỏi.
 
 - **Adapter khác** (`tesseract`, `easyocr`, `paddleocr`, `paddleocr_vl`, `surya`): chạy chính `V`:
 
@@ -116,7 +119,8 @@ ocrbench run --config C --models V__sl__long --categories syn_longtable,syn_long
 ocrbench run --config C --models V --categories syn_longtable,syn_longtext --per-category 12 --gpus 0,1
 ```
 
-- Biến thể `__long` cũ không có `stop_on_loop` (vd. `sherif_handwriting__long`): đặt `enabled: false`, KHÔNG chạy tiếp.
+- Biến thể `__long` cũ đọc cả tài liệu một lượt (`sherif_handwriting__long`, `sherif_handwriting__sl__long`): đặt
+  `enabled: false`, KHÔNG chạy tiếp, KHÔNG xóa kết quả của chúng.
 
 Sau đó `ocrbench goal-check --config C`. Phải thấy `CHẠY XONG, CHƯA GHI BENCHMARK`.
 
