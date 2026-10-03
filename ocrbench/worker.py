@@ -171,11 +171,12 @@ def run_model(
     if retry_errors:
         done = {k: v for k, v in done.items() if not v.get("error")}
     todo = [it for it in items if it.id not in done]
+    n_done = len(items) - len(todo)  # số mẫu của lượt này đã có kết quả
     tag = spec.name
     if num_shards > 1:
         todo = [it for it in todo if shard_of(it.id, num_shards) == shard]
         tag = f"{spec.name}#{shard + 1}/{num_shards}"
-    print(f"[{tag}] {len(items)} mẫu, đã có {len(items) - len(done)}, phần này cần chạy {len(todo)}", flush=True)
+    print(f"[{tag}] {len(items)} mẫu, đã có {n_done}, phần này cần chạy {len(todo)}", flush=True)
     if not todo:
         return 0
 
