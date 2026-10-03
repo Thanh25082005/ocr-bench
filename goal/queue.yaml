@@ -8,6 +8,8 @@
 split: dev
 max_skips: 3            # bỏ qua quá số này thì goal không đạt, agent phải dừng hỏi
 max_error_rate: 0.01    # tỉ lệ mẫu lỗi tối đa để một model được coi là chạy xong
+long_per_category: 12   # tài liệu dài (syn_longtable, syn_longtext): chỉ chấm 12 mẫu cố định mỗi nhóm cho mọi model
+                        # (đủ 128 mẫu thì một VLM cần ~20 giờ vì tài liệu 3 trang + lặp vòng)
 
 queue:
   - tesseract            # OCR truyền thống, CPU — mốc so sánh rẻ nhất (đã xong)

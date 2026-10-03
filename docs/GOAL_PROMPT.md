@@ -95,21 +95,28 @@ ocrbench goal-check --config C
   Vẫn > 1%: xem `OUT/dev/V/run.log`, sửa theo mục 7 bằng biến thể mới, chạy lại bước C với biến thể đó.
 - Model chạy lâu (hàng giờ) là bình thường: cứ 30 phút tool tự đẩy tiến độ lên GitHub.
 
-### Bước D — Tài liệu dài (`syn_longtable`, `syn_longtext`)
+### Bước D — Tài liệu dài (`syn_longtable`, `syn_longtext`): chỉ 12 mẫu cố định mỗi nhóm
 
-- **Adapter `hf_vlm`:** tạo mục mới tên `V__long`: chép nguyên mục `V`, đặt `max_new_tokens: 8192`, thêm
-  `processor_kwargs: {max_pixels: 1003520}`. Chạy `ocrbench vram --config C --models V__long --long`, xử lý theo mục 6
-  nếu không vừa (tên biến thể vẫn phải **kết thúc bằng `__long`**). Rồi:
+`goal/queue.yaml` đặt `long_per_category: 12`: mọi model chỉ chấm **cùng 24 tài liệu dài** (đủ 128 tài liệu thì một
+VLM cần khoảng 20 giờ). Lệnh run PHẢI có `--per-category 12`, không có thì sẽ chạy cả 128.
+
+- **Adapter `hf_vlm`:** tạo mục mới tên `V__sl__long`: chép nguyên mục `V`, đặt `max_new_tokens: 8192` và
+  `stop_on_loop: true` (dừng sớm khi model lặp vòng; mẫu lặp vốn đã sai, nên kết quả mẫu đúng không đổi).
+  **CẤM** thêm `max_pixels` / `max_image_side` (giảm độ phân giải = đánh đổi độ chính xác). Chạy
+  `ocrbench vram --config C --models V__sl__long --long`, xử lý theo AGENT_PROMPT mục 6 nếu không vừa (tên biến thể
+  vẫn phải **kết thúc bằng `__long`**). Rồi:
 
 ```bash
-ocrbench run --config C --models V__long --categories syn_longtable,syn_longtext --gpus 0,1
+ocrbench run --config C --models V__sl__long --categories syn_longtable,syn_longtext --per-category 12 --gpus 0,1
 ```
 
 - **Adapter khác** (`tesseract`, `easyocr`, `paddleocr`, `paddleocr_vl`, `surya`): chạy chính `V`:
 
 ```bash
-ocrbench run --config C --models V --categories syn_longtable,syn_longtext --gpus 0,1
+ocrbench run --config C --models V --categories syn_longtable,syn_longtext --per-category 12 --gpus 0,1
 ```
+
+- Biến thể `__long` cũ không có `stop_on_loop` (vd. `sherif_handwriting__long`): đặt `enabled: false`, KHÔNG chạy tiếp.
 
 Sau đó `ocrbench goal-check --config C`. Phải thấy `CHẠY XONG, CHƯA GHI BENCHMARK`.
 

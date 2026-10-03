@@ -160,8 +160,8 @@ mkdir -p WORK/reports && cp -r OUT/dev/_report WORK/reports/phase2_screening
 
 Chỉ xét những model **có tên trong danh sách chung kết của ít nhất một nhóm** ở giai đoạn 2.
 
-1. Với mỗi model đó, tạo mục mới `<model>__long`: giữ nguyên mọi thứ của mục gốc, đặt `max_new_tokens: 8192`, thêm
-   `processor_kwargs: {max_pixels: 1003520}` (chỉ với adapter `hf_vlm`).
+1. Với mỗi model đó, tạo mục mới `<model>__sl__long`: giữ nguyên mọi thứ của mục gốc, đặt `max_new_tokens: 8192`,
+   thêm `stop_on_loop: true` (chỉ với adapter `hf_vlm`). **CẤM** thêm `max_pixels` / `max_image_side`.
 2. Chạy `ocrbench vram --config C --long --models <model>__long`, rồi xử lý theo mục 6 nếu không vừa.
 3. Chạy:
 
@@ -265,6 +265,9 @@ Dấu hiệu: log (`OUT/dev/<model>/run.log`) có `CUDA out of memory` hoặc `O
 
 3. Đặt `enabled: false` cho mục cũ. Chạy mục mới theo giai đoạn đang làm, bắt đầu bằng `--per-category 1`.
 4. Mỗi bậc chỉ thử **1 lần**. Không bỏ qua bậc. Không quay lại bậc cao hơn.
+4b. **Bậc C trở đi (giảm ảnh, nén 8-bit/4-bit, đẩy sang RAM) làm GIẢM ĐỘ CHÍNH XÁC so với model gốc. Người dùng
+    không chấp nhận đánh đổi này nếu chưa đồng ý. Trước khi tạo bất kỳ biến thể bậc C–H nào: DỪNG và hỏi**, kèm số
+    tham số, VRAM trống, và lỗi của bậc B. Chỉ bậc A, B được tự làm.
 5. Riêng mục `__long`: **trước** khi xuống bậc D, được thử thêm `params.multi_page: per_page` (hậu tố `__perpage`).
    Ghi vào báo cáo: "đọc từng trang, không đo được khả năng giữ ngữ cảnh qua trang".
 6. Đến bậc H mà vẫn hết bộ nhớ, **hoặc** bậc H chạy 1 mẫu mất > 10 phút: đặt `enabled: false`, ghi nhật ký

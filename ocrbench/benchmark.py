@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .config import Config
 from .dataset import fingerprint, load_manifest
-from .goal import LONG_CATEGORIES, SKIP_REASONS, evaluate, load_queue, load_skips
+from .goal import LONG_CATEGORIES, SKIP_REASONS, evaluate, goal_items, load_queue, load_skips
 from .score import aggregate, score_model
 
 
@@ -24,7 +24,7 @@ def _pct(x, d=1):
 def build_benchmark(cfg: Config) -> str:
     q = load_queue()
     split = q["split"]
-    items = load_manifest(cfg.dataset, split=split)
+    items = goal_items(cfg, q)  # nhóm tài liệu dài: tập con cố định (nếu goal/queue.yaml đặt long_per_category)
     cats = sorted({it.category for it in items})
     # nhóm bảng = MỌI mẫu đều là bảng; nhóm trộn (vd. syn_degraded có lẫn hóa đơn) chấm bằng CER
     table_cats = {c for c in cats if all(it.gt_type == "table_html" for it in items if it.category == c)}
@@ -62,7 +62,9 @@ def build_benchmark(cfg: Config) -> str:
     rows.sort(key=lambda r: (r["text"] is None, r["text"] if r["text"] is not None else 9))
     now = datetime.now(timezone.utc)
     L = ["# Benchmark OCR (tiếng Anh + tiếng Ả Rập)", "",
-         f"Cập nhật **{now:%Y-%m-%d %H:%M} UTC** · split `{split}` · {len(items)} mẫu · "
+         f"Cập nhật **{now:%Y-%m-%d %H:%M} UTC** · split `{split}` · {len(items)} mẫu"
+         + (f" (tài liệu dài: {q['long_per_category']} mẫu cố định mỗi nhóm)" if q.get("long_per_category") else "")
+         + " · "
          f"dấu vân tay bộ test `{fingerprint(load_manifest(cfg.dataset))}` · sinh tự động bởi `ocrbench benchmark`.", "",
          "Chỉ số: **CER** = tỉ lệ lỗi ký tự (thấp = tốt) cho văn bản; **Ô đúng** = ô bảng đúng giá trị và đúng vị trí "
          "(cao = tốt). Giải thích đầy đủ: `docs/METRICS.md` (nhánh `main`).", "",

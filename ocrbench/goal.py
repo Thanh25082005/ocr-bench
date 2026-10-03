@@ -22,7 +22,7 @@ from pathlib import Path
 import yaml
 
 from .config import Config
-from .dataset import fingerprint, load_manifest
+from .dataset import fingerprint, load_manifest, sample_per_category
 from .worker import load_predictions
 
 CODE_DIR = Path(__file__).resolve().parents[1]
@@ -51,11 +51,23 @@ HF_ADAPTERS = {"hf_vlm"}
 CHECK_GIT = True  # kiểm tra code của tool không bị sửa (tắt trong test)
 
 
+def goal_items(cfg: Config, q: dict) -> list:
+    """Mẫu mà goal yêu cầu: mọi mẫu nhóm thường + (tập con cố định của) nhóm tài liệu dài.
+    Tập con chọn bằng đúng hàm của `--per-category`, nên `ocrbench run --per-category N` chạy đúng các mẫu này."""
+    items = load_manifest(cfg.dataset, split=q["split"])
+    normal = [it for it in items if it.category not in LONG_CATEGORIES]
+    long = [it for it in items if it.category in LONG_CATEGORIES]
+    if q.get("long_per_category"):
+        long = sample_per_category(long, int(q["long_per_category"]))
+    return normal + long
+
+
 def load_queue() -> dict:
     q = yaml.safe_load(QUEUE_FILE.read_text(encoding="utf-8"))
     q.setdefault("max_skips", 3)
     q.setdefault("max_error_rate", 0.01)
     q.setdefault("split", "dev")
+    q.setdefault("long_per_category", None)  # tài liệu dài: chỉ chấm N mẫu cố định mỗi nhóm (None = tất cả)
     return q
 
 
@@ -192,7 +204,7 @@ def _skip_problem(cfg: Config, s: dict) -> str | None:
 def evaluate(cfg: Config) -> tuple[list[ItemState], list[str]]:
     q = load_queue()
     split = q["split"]
-    items = load_manifest(cfg.dataset, split=split)
+    items = goal_items(cfg, q)
     normal_items = [it for it in items if it.category not in LONG_CATEGORIES]
     long_items = [it for it in items if it.category in LONG_CATEGORIES]
     skips = load_skips(cfg)
@@ -254,7 +266,10 @@ def _decide(st: ItemState, q: dict, cfg: Config) -> None:
     elif not long_ok:
         done = st.long[1] if st.long else 0
         st.state = f"ĐANG CHẠY tài liệu dài ({done}/{st.long[2] if st.long else '?'})"
-        st.next_action = f"bước D của docs/GOAL_PROMPT.md cho '{st.name}' (tài liệu dài)"
+        n = q.get("long_per_category")
+        sub = f" --per-category {n}" if n else ""
+        st.next_action = (f"bước D của docs/GOAL_PROMPT.md cho '{st.name}': ocrbench run {C} --models <biến thể> "
+                          f"--categories syn_longtable,syn_longtext{sub} --gpus 0,1")
     elif not st.in_benchmark:
         st.state = "CHẠY XONG, CHƯA GHI BENCHMARK"
         st.next_action = f"ocrbench benchmark {C} && ocrbench status {C} --push --note 'benchmark: {st.name}'"

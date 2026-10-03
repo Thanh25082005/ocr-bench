@@ -133,3 +133,30 @@ def test_mixed_category_scored_by_cer(goal_env):
     write_benchmark(load_config(cfg_path))
     row = next(x for x in bench.read_text(encoding="utf-8").splitlines() if x.startswith("| printed_en"))
     assert "*" not in row.split("|")[1] and "0.0%" in row
+
+
+def test_long_docs_use_fixed_subset(goal_env):
+    """long_per_category: goal chỉ đòi tập con cố định của nhóm tài liệu dài, đúng tập mà --per-category chạy."""
+    import json
+    project, cfg_path, queue = goal_env
+    m = project / "data/manifest.jsonl"
+    lines = [json.loads(x) for x in m.read_text().splitlines()]
+    from PIL import Image
+    for i in range(6):
+        Image.new("RGB", (8, 8)).save(project / f"data/long{i}.png")
+        lines.append({"id": f"syn_longtext/d{i}", "image": f"long{i}.png", "category": "syn_longtext",
+                      "gt": f"long text {i}", "doc_id": f"L{i}", "split": "dev"})
+    m.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in lines) + "\n")
+    q = yaml.safe_load(queue.read_text())
+    q["long_per_category"] = 2
+    q["queue"] = ["oracle"]
+    queue.write_text(yaml.safe_dump(q))
+    goal.write_lock(load_config(cfg_path))
+    main(["run", "--config", cfg_path, "--models", "oracle", "--categories",
+          "printed_en,printed_ar,handwriting_ar,tables", "--inline", "--no-score"])
+    assert _state(cfg_path, "oracle").startswith("ĐANG CHẠY tài liệu dài (0/2)")
+    main(["run", "--config", cfg_path, "--models", "oracle", "--categories", "syn_longtext", "--per-category", "2",
+          "--inline", "--no-score"])
+    assert _state(cfg_path, "oracle") == "CHẠY XONG, CHƯA GHI BENCHMARK"
+    write_benchmark(load_config(cfg_path))
+    assert "2 mẫu cố định mỗi nhóm" in (project / "BENCHMARK.md").read_text(encoding="utf-8")
