@@ -92,5 +92,7 @@ Tự tạo hoàn toàn (`python inference/make_samples.py`, seed riêng, không 
 | `10_pdf_scan_bang_dai_3_trang.pdf` | PDF scan 3 trang, bảng sao kê dài — giá trị có lệch hàng không |
 | `11_pdf_scan_2_trang_hop_dong_va_hoa_don.pdf` | PDF nhiều trang, mỗi trang một loại |
 | `12_pdf_co_lop_chu_thu_tieng_anh.pdf` | PDF có lớp chữ: bật "Dùng lớp chữ" → lấy thẳng, không qua model |
+| `13_bang_nho_tieng_anh_245px.png` | Ảnh bảng **rất nhỏ, mờ** (245 px) — kiểm tra phóng ảnh nhỏ + chặn chạy vòng |
+| `14_bang_nho_tieng_a_rap_300px.png` | Như trên, bảng tiếng Ả Rập (300 px) |
 
 Gợi ý thứ tự demo: 01 (bảng đẹp) → 06 (chữ viết tay) → 08 (ảnh xấu) → 10 với Trang `1-3` (tài liệu dài).
