@@ -41,6 +41,7 @@ class PageResult:
     note: str | None = None  # vd. "bị cắt", "model bị lặp" → người duyệt cần soát trang này
     blocks: list | None = None  # chế độ bố cục: [{category, bbox}] theo thứ tự đọc
     layout_image: Path | None = None  # ảnh trang có khung từng khối (để đối chiếu)
+    page_image: Path | None = None  # ảnh trang gốc (save_pages=True) — để xem song song bản gốc / bản OCR
 
 
 @dataclass
@@ -163,7 +164,8 @@ class Converter:
         return image, Item(id=f"{path.name}#p{n}", image=path, category=f"app_{doc_type}", gt="", gt_type=gt_type)
 
     def convert_file(self, path: str | Path, out_dir: str | Path, force_ocr: bool = False, pages: str | None = None,
-                     doc_type: str = "text", progress=None, mode: str | None = None) -> FileResult:
+                     doc_type: str = "text", progress=None, mode: str | None = None,
+                     save_pages: bool = False) -> FileResult:
         path, out_dir = Path(path), Path(out_dir)
         if self.modes or mode:
             self.set_mode(mode)
@@ -171,7 +173,7 @@ class Converter:
         result = FileResult(path)
         page_list, close = self._open(path, pages)
         try:
-            self._convert_pages(path, page_list, result, force_ocr, doc_type, progress, out_dir)
+            self._convert_pages(path, page_list, result, force_ocr, doc_type, progress, out_dir, save_pages)
         finally:
             close()
         doc = new_document(title=path.stem)
@@ -184,7 +186,17 @@ class Converter:
         doc.save(result.docx)
         return result
 
-    def _convert_pages(self, path, page_list, result, force_ocr, doc_type, progress, out_dir=None):
+    def _save_page(self, image, out_dir, path, n) -> Path:
+        im = image.convert("RGB")
+        if max(im.size) > 2000:
+            im = im.copy()
+            im.thumbnail((2000, 2000), Image.LANCZOS)
+        p = Path(out_dir) / "trang" / f"{path.stem}_trang{n}.jpg"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        im.save(p, quality=88)
+        return p
+
+    def _convert_pages(self, path, page_list, result, force_ocr, doc_type, progress, out_dir=None, save_pages=False):
         """Trang có lớp chữ dùng được → lấy luôn; trang còn lại gom thành batch, chia cho các GPU chạy song song."""
         slots: list[PageResult | None] = [None] * len(page_list)
         todo = []  # (vị trí, số trang, hàm dựng ảnh)
@@ -192,6 +204,11 @@ class Converter:
             layer = unicodedata.normalize("NFKC", text_layer).strip()  # gộp dạng trình bày của chữ Ả Rập
             if not force_ocr and len(layer) >= self.min_text_chars and not _ARABIC.search(layer):
                 slots[k] = PageResult(n, "lớp chữ PDF", layer, 0.0)
+                if save_pages and out_dir is not None:
+                    try:
+                        slots[k].page_image = self._save_page(render(), out_dir, path, n)
+                    except Exception:  # ảnh xem trước hỏng không được làm hỏng kết quả chữ
+                        pass
             else:
                 todo.append((k, n, render))
         done = len(page_list) - len(todo)
@@ -210,6 +227,8 @@ class Converter:
             batches = [ready[i:i + self.batch] for i in range(0, len(ready), self.batch)]
             images = {k: img for k, n, img, item in ready}
             for k, res in self._run_batches(batches):
+                if save_pages and out_dir is not None and k in images:
+                    res.page_image = self._save_page(images[k], out_dir, path, res.index)
                 if res.blocks and out_dir is not None:
                     from .layout import Block, draw_blocks
 

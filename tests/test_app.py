@@ -127,11 +127,11 @@ def test_text_layer_used_for_english_but_not_arabic(converter, tmp_path):
     assert converter.convert_file(tmp_path / "en.pdf", tmp_path / "o", force_ocr=True).pages[0].source == "OCR"
 
 
-def test_gradio_app_builds(converter):
+def test_gradio_app_builds(converter, tmp_path):
     pytest.importorskip("gradio")
     from ocrbench.app import build_app
 
-    demo = build_app(converter)
+    demo = build_app(converter, history_dir=tmp_path / "h")
     assert demo is not None
 
 
@@ -201,4 +201,46 @@ def test_reading_modes_and_layout_overlay(tmp_path):
     pytest.importorskip("gradio")
     from ocrbench.app import build_app
 
-    assert build_app(conv) is not None
+    assert build_app(conv, history_dir=tmp_path / "h") is not None
+
+
+def test_history_and_side_by_side_view(tmp_path):
+    """Mỗi lần chuyển lưu thành một lần chạy: file gốc, ảnh từng trang, chữ, ảnh bố cục, DOCX; mở lại được."""
+    pytest.importorskip("markdown_it")
+    from ocrbench import history as H
+    from ocrbench.app import _render, convert_to_job
+
+    (tmp_path / "m.jsonl").write_text("")
+    (tmp_path / "c.yaml").write_text(yaml.safe_dump({"dataset": "m.jsonl", "models": [{
+        "name": "lay", "adapter": "tests.test_app:FakeLayout",
+        "params": {"prompt": "LAYOUT", "output_format": "layout_json", "modes": {"Bố cục đầy đủ": {}}}}]}))
+    conv = Converter(tmp_path / "c.yaml", "lay")
+    _scan_pdf(tmp_path / "scan.pdf", n=2)
+    Image.new("RGB", (300, 300), "white").save(tmp_path / "a.png")
+    hist = tmp_path / "hist"
+    job, rows = convert_to_job(conv, hist, [tmp_path / "scan.pdf", tmp_path / "a.png"], use_text_layer=False)
+    assert len(rows) == 3 and [len(f["pages"]) for f in job["files"]] == [2, 1]
+    jobs = H.list_jobs(hist)
+    assert [j["id"] for j in jobs] == [job["id"]]
+    loaded = H.load_job(hist, job["id"])
+    f0 = loaded["files"][0]
+    assert H.abs_path(loaded, f0["source"]).endswith("scan.pdf") and H.abs_path(loaded, f0["docx"]).endswith(".docx")
+    for p in f0["pages"]:
+        assert H.abs_path(loaded, p["image"]) and H.abs_path(loaded, p["layout_image"])
+    img, html, raw, info = _render(loaded, 0, "Trang 2", show_layout=False)
+    assert img.endswith("scan_trang2.jpg") and "<h1>Invoice</h1>" in html and raw.startswith("# Invoice")
+    assert "trang 2 (2/2)" in info
+    img, *_ = _render(loaded, 0, "Trang 2", show_layout=True)
+    assert img.endswith("_bocuc.jpg")
+    H.delete_job(hist, job["id"])
+    assert H.list_jobs(hist) == []
+
+
+def test_ocr_html_is_sanitized_and_renders_tables():
+    pytest.importorskip("markdown_it")
+    from ocrbench.viewer import ocr_html
+
+    out = ocr_html('# T\n\n<table><tr><td colspan="2" onclick="x()">a</td></tr></table>\n\n'
+                   '<script>alert(1)</script><img src=x onerror=alert(1)><a href="javascript:x">l</a>\n\n| a | b |\n|---|---|\n| 1 | 2 |')
+    assert "<h1>T</h1>" in out and '<td colspan="2">a</td>' in out and "<th>a</th>" in out
+    assert "script" not in out and "onerror" not in out and "onclick" not in out and "javascript" not in out

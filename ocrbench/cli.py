@@ -198,7 +198,7 @@ def cmd_serve(a):
     from .app import serve
 
     serve(a.config, a.model, host=a.host, port=a.port, share=a.share, dpi=a.dpi,
-          params=_params(a.set), gpus=a.gpus, text_layer=not a.ocr_all, title=a.title)
+          params=_params(a.set), gpus=a.gpus, text_layer=not a.ocr_all, title=a.title, history_dir=a.history_dir)
 
 
 def _params(sets):
@@ -336,6 +336,7 @@ def main(argv=None):
     p.add_argument("--gpus", default="auto", help="auto = mọi GPU (một bản model mỗi GPU); vd. 0 hoặc 0,1")
     p.add_argument("--ocr-all", action="store_true", help="mặc định bỏ chọn 'Dùng lớp chữ PDF' (mọi trang qua model)")
     p.add_argument("--title", help="tiêu đề trang web")
+    p.add_argument("--history-dir", help="thư mục lưu lịch sử (mặc định /kaggle/working/ocr_history hoặc ./ocr_history)")
     p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("speedtest", help="đo tốc độ + độ chính xác của các cấu hình tối ưu (chọn cấu hình triển khai)")

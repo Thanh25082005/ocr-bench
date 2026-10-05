@@ -30,6 +30,18 @@ Tùy chọn: `GPUS=1` (chỉ dùng GPU 1, khi GPU 0 đang chạy benchmark) · `
 
 ## Trên web
 
+**Tab Chuyển đổi**: kéo thả file → *Chuyển* → ngay bên dưới là khung **xem song song**: trái là trang gốc,
+phải là kết quả OCR của đúng trang đó (bảng hiển thị thành bảng, tiếng Ả Rập phải-sang-trái). Lật trang bằng
+◀ ▶ hoặc chọn trang; *Hiện khung bố cục* = vẽ khung + thứ tự đọc từng khối lên trang gốc; tab *Văn bản thô* để
+sao chép. Trang có ⚠ là trang cần soát (bị cắt, bị lặp, JSON bố cục hỏng).
+
+**Tab Lịch sử**: mọi lần chuyển đều được lưu (file gốc, ảnh trang, chữ OCR, ảnh bố cục, DOCX) ở
+`/kaggle/working/ocr_history/` (đổi bằng `--history-dir` hoặc biến `OCR_HISTORY_DIR`). Bấm một dòng → *Mở* để xem
+song song lại, tải lại DOCX / file gốc; *Xoá* để xoá hẳn lần chạy đó. Lịch sử nằm trên ổ của phiên Kaggle: hết
+phiên là mất, cần giữ thì tải về trước.
+
+### Tuỳ chọn khi chuyển
+
 - **Chế độ đọc**: *Bố cục đầy đủ* (mặc định: khối + chữ + bảng HTML) · *Chỉ chữ* (prompt_ocr) ·
   *Chỉ bố cục (không chữ)* (chỉ khung, nhanh).
 - **Dùng lớp chữ có sẵn của PDF**: mặc định TẮT để mọi trang đều qua dots (xem được bố cục).
