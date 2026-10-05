@@ -1,7 +1,7 @@
 # Config cho web demo dots.mocr (ocrbench serve). Mục dots_mocr chép NGUYÊN từ configs/kaggle_example.yaml.
 # dataset/output_dir không dùng khi demo (chỉ để config hợp lệ).
 # Riêng cho web demo (benchmark KHÔNG dùng): phóng ảnh nhỏ (cạnh dài < 1000 px → 1500 px, tối đa ×3) và giới hạn
-# token theo kích thước ảnh — ảnh nhỏ độ phân giải thấp (vd. bảng 245×90 px) từng làm dots chạy vòng 24.000 token (~40 phút).
+# token theo kích thước ảnh — ảnh nhỏ độ phân giải thấp (vd. bảng 245×90 px) từng làm dots chạy vòng 24.000 token (~40 phút). Hệ số 8: ảnh bảng nhỏ bị tách thành nhiều khối (mỗi khối ~20 token toạ độ) — hệ số 4 làm cắt mất dòng cuối.
 dataset: inference/khong_dung.jsonl
 output_dir: /kaggle/working/inference_runs
 models:
@@ -27,4 +27,4 @@ models:
       upscale_below: 1000
       upscale_to: 1500
       upscale_max_factor: 3.0
-    adaptive_max_tokens: 4
+    adaptive_max_tokens: 8
