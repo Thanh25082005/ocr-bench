@@ -1,0 +1,34 @@
+عقد صيانة
+رقم العقد: 74766
+إنه في يوم السبت الموافق 2023/08/03، تم الاتفاق بين كل من:
+الطرف الأول: شركة الواحة للأغذية، ومقرها المنامة، ويمثلها السيد أحمد حمزة العمري بصفته رئيس مجلس الإدارة.
+الطرف الثاني: مجموعة المستقبل للاستشارات، ويمثلها السيد زياد فهد الخطيب بصفته المدير العام.
+تمهيد: حيث إن الطرف الأول يرغب في تصميم وتطوير نظام إلكتروني لإدارة الموارد، وحيث إن الطرف الثاني لديه الخبرة والإمكانات اللازمة لذلك، فقد اتفق الطرفان على ما يلي:
+البند الأول: لا يحق للطرف الثاني التعاقد من الباطن لتنفيذ أي جزء من الأعمال دون موافقة مسبقة من الطرف الأول.
+البند الثاني: يحق لأي من الطرفين إنهاء هذا العقد بإشعار كتابي مدته 60 يوماً في حال إخلال الطرف الآخر بالتزاماته.
+البند الثالث: يتحمل الطرف الثاني مسؤولية أي أضرار تلحق بممتلكات الطرف الأول أثناء تنفيذ الأعمال.
+البند الرابع: في حال تأخر الطرف الثاني عن التسليم يحق للطرف الأول خصم غرامة تأخير بنسبة 5% عن كل أسبوع تأخير.
+البند الخامس: مدة هذا العقد 18 شهراً تبدأ من تاريخ توقيعه، ويجوز تجديدها باتفاق الطرفين كتابةً.
+الطرف الأول
+الاسم:
+التوقيع:
+الطرف الثاني
+الاسم:
+التوقيع:
+
+=== trang 2 ===
+
+<h1>Trust Insurance Ltd.</h1>
+<p>180 Market Road, New York, United States</p>
+<p>VAT No.: 320145670008993</p>
+<p>Phone: +971 54 468 7500    accounts@corp.qa</p>
+<h2>Tax Invoice</h2>
+<p>Invoice No.: NWG-8609</p>
+<p>Invoice Date: 26 January 2024</p>
+<p>Bill To: Horizon Trading Group</p>
+<p>Customer Address: 211 Market Road, Toronto, Canada</p>
+<table><tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr><tr><td>1</td><td>Office chair</td><td>26</td><td>2,758.25</td><td>71,714.50</td></tr><tr><td>2</td><td>Annual maintenance service</td><td>32</td><td>3,609.00</td><td>115,488.00</td></tr><tr><td>3</td><td>24-inch monitor</td><td>39</td><td>1,971.50</td><td>76,888.50</td></tr><tr><td>4</td><td>Consulting hours</td><td>31</td><td>3,698.50</td><td>114,653.50</td></tr><tr><td>5</td><td>Projector</td><td>20</td><td>898.25</td><td>17,965.00</td></tr><tr><td>6</td><td>Network cable</td><td>7</td><td>831.25</td><td>5,818.75</td></tr><tr><td>7</td><td>Black toner cartridge</td><td>11</td><td>2,229.25</td><td>24,521.75</td></tr></table>
+<table><tr><td>Subtotal</td><td>427,050.00 EUR</td></tr><tr><td>VAT (5%)</td><td>21,352.50 EUR</td></tr><tr><td>Total Due</td><td>448,402.50 EUR</td></tr></table>
+<p>Payment terms: within 15 days of the invoice date</p>
+<p>IBAN: SA81 7345 1318 4013 5936 4023</p>
+<p>Thank you for your business</p>

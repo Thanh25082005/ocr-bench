@@ -40,3 +40,25 @@ Tốc độ ước tính trên T4: ~30–90 giây/trang tùy độ dày chữ (2
   Demo bằng tài liệu mẫu; dùng tài liệu thật phải hỏi pháp lý trước.
 - Muốn ra file giống hệt tool gốc của họ (.json, .jpg bố cục, .md, _nohf.md):
   `ocrbench dots-parse file.pdf --config inference/config.yaml --model dots_mocr -o dots_out`
+
+## Tài liệu mẫu để demo (`samples/`)
+
+Tự tạo hoàn toàn (`python inference/make_samples.py`, seed riêng, không lấy từ bộ test). Đáp án đúng ở
+`samples/dap_an/` (`.html` = bảng, `.txt` = văn bản) để so khi demo.
+
+| File | Thử điều gì |
+|---|---|
+| `01_hoa_don_tieng_anh.png` | Bảng tiếng Anh → bảng Word |
+| `02_hoa_don_tieng_a_rap.png` | Bảng tiếng Ả Rập, số Ả Rập-Ấn (٠١٢…), phải-sang-trái |
+| `03_hoa_don_tron_anh_a_rap.png` | Trộn Anh + Ả Rập trong cùng trang |
+| `04_hop_dong_tieng_a_rap.png` | Văn bản dài tiếng Ả Rập, tiêu đề + đoạn |
+| `05_thu_tieng_anh.png` | Thư tiếng Anh |
+| `06_bieu_mau_viet_tay_a_rap.png` | Biểu mẫu điền tay tiếng Ả Rập |
+| `07_bieu_mau_viet_tay_anh.png` | Biểu mẫu điền tay tiếng Anh |
+| `08_anh_chup_xau_hoa_don_a_rap.jpg` | Ảnh chụp nghiêng, tối góc, mờ (mức vừa) |
+| `09_anh_chup_rat_xau_hop_dong_anh.jpg` | Ảnh chụp rất xấu (mức khó) |
+| `10_pdf_scan_bang_dai_3_trang.pdf` | PDF scan 3 trang, bảng sao kê dài — giá trị có lệch hàng không |
+| `11_pdf_scan_2_trang_hop_dong_va_hoa_don.pdf` | PDF nhiều trang, mỗi trang một loại |
+| `12_pdf_co_lop_chu_thu_tieng_anh.pdf` | PDF có lớp chữ: bật "Dùng lớp chữ" → lấy thẳng, không qua model |
+
+Gợi ý thứ tự demo: 01 (bảng đẹp) → 06 (chữ viết tay) → 08 (ảnh xấu) → 10 với Trang `1-3` (tài liệu dài).

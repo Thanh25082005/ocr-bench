@@ -1,0 +1,11 @@
+Customer Information Update Form
+Full Name: Sarah Haddad
+ID Number: 9613123074
+Date of Birth: 13 September 2004
+Address: 32 Business Bay Boulevard, Riyadh, Saudi Arabia
+Mobile: +971 51 932 4774
+Date: 2023-01-24
+Reason: Updating personal details
+Email: admin@example.com
+Employer: Modern Build Group
+Signature:
