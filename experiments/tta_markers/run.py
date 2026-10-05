@@ -42,6 +42,13 @@ DEFAULT_PASSES = "x4_ocr,x5_ocr,x5_layout"
 _DATA_IMG = re.compile(r"!\[[^\]]*\]\(data:image/[^)]*\)")
 
 
+def load_synth(path):
+    """Bộ bảng tự sinh experiments/marker_bench (make.py) → [(tên, ảnh, đáp án HTML)]."""
+    d = Path(path)
+    recs = [json.loads(line) for line in (d / "manifest.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [(r["name"], d / r["image"], r["gt"]) for r in recs]
+
+
 def load_items(ids, samples):
     from ocrbench.dataset import holdout_excluded, load_manifest
 
@@ -120,10 +127,13 @@ def main():
     ap.add_argument("--samples", default=",".join(DEFAULT_SAMPLES))
     ap.add_argument("--passes", default=DEFAULT_PASSES)
     ap.add_argument("--out", default="/kaggle/working/exp_tta")
+    ap.add_argument("--synth", default="", help="thư mục bộ tự sinh (experiments/marker_bench/data); thêm vào danh sách")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     items = load_items([x for x in a.ids.split(",") if x], [x for x in a.samples.split(",") if x])
+    if a.synth:
+        items += load_synth(a.synth)
     passes = [p for p in a.passes.split(",") if p]
     import torch
 
@@ -157,6 +167,12 @@ def main():
             rec[f"fused_v{mv}"] = {"md": fused, "changes": changes, "cer": cer(gt, fused),
                                    "markers_ok": len(g & f), "markers_wrong": len((f - b) - g) if gt else None}
         rec["gt_markers"] = len(g)
+        rec["per_pass"] = {}  # ghép với TỪNG lượt phụ riêng lẻ → biết lượt nào thực sự có ích
+        for spec, p in rec["passes"].items():
+            fused1, _ = fuse_markers(rec["base"]["md"], [p.get("md", "")], min_votes=1)
+            f1 = markers_in(fused1)
+            rec["per_pass"][spec] = {"ok": len(g & f1), "wrong": len((f1 - b) - g) if gt else None,
+                                     "seconds": p.get("seconds")}
         rec["base_cer"], rec["base_markers_ok"] = cer(gt, rec["base"]["md"]), len(g & b)
         (out / f"{name}.json").write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
         rows.append(rec)
@@ -184,6 +200,15 @@ def main():
         tot["w2"] += r["fused_v2"]["markers_wrong"] or 0
     lines += ["", f"**Tổng ký hiệu trước số:** đáp án {tot['g']} · gốc giữ {tot['b']} · ghép v1 {tot['v1']} "
                   f"(thêm sai {tot['w1']}) · ghép v2 {tot['v2']} (thêm sai {tot['w2']})"]
+    lines += ["", "**Từng lượt phụ riêng lẻ** (ghép chỉ với lượt đó):", "",
+              "| Lượt phụ | Ký hiệu thêm đúng | Thêm sai | Tổng giây |", "|---|---:|---:|---:|"]
+    for spec in passes:
+        ok = sum(r["per_pass"].get(spec, {}).get("ok", 0) - r["base_markers_ok"] for r in rows)
+        wrong = sum(r["per_pass"].get(spec, {}).get("wrong") or 0 for r in rows)
+        sec = sum(r["per_pass"].get(spec, {}).get("seconds") or 0 for r in rows)
+        lines.append(f"| {spec} | {ok} | {wrong} | {round(sec)} |")
+    base_sec = sum(r["base"]["seconds"] for r in rows)
+    lines += ["", f"Tổng giây lượt gốc: {round(base_sec)}"]
     errs = [(r["name"], s, p["error"]) for r in rows for s, p in r["passes"].items() if p.get("error")]
     if errs:
         lines += ["", "**Lượt phụ lỗi:**"] + [f"- {n} · {s}: {e}" for n, s, e in errs]

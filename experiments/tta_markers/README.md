@@ -23,6 +23,13 @@ CUDA_VISIBLE_DEVICES=0 /kaggle/working/venvs/dots/bin/python experiments/tta_mar
 Mặc định: 8 ảnh bảng (552595 — holdout ĐÃ LOẠI; 7 ảnh dev có < ≥ ± chữ mũ, danh sách lồng) + 2 ảnh đối chứng
 (`inference/samples` 01, 08 — không được tệ đi). Script từ chối ảnh holdout chưa nằm trong `goal/holdout_excluded.yaml`.
 
+Chạy trên bộ tự sinh 20 bảng / 121 ký hiệu (`experiments/marker_bench`):
+```bash
+CUDA_VISIBLE_DEVICES=0 /kaggle/working/venvs/dots/bin/python experiments/tta_markers/run.py \
+  --ids pub_tables_en/pubtabnet__552595 --samples "" --synth experiments/marker_bench/data --out /kaggle/working/exp_tta2
+```
+report.md có thêm bảng **"Từng lượt phụ riêng lẻ"** → biết nên giữ lượt nào (cắt chi phí).
+
 ## Đọc kết quả (report.md)
 - **Ghép v1/v2 (sai)**: số ký hiệu trước số đúng sau khi ghép (số ký hiệu ghép thêm SAI).
 - **CER gốc → v1/v2**: phải không tăng ở mọi ảnh, nhất là ảnh đối chứng.
