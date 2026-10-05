@@ -24,6 +24,18 @@ from pathlib import Path
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 GT_EXTS = (".html", ".htm", ".txt", ".md")
 SPLITS = ("dev", "holdout")
+# mẫu holdout đã bị xem → bỏ khỏi lần chấm cuối (chỉ áp dụng khi lọc split="holdout"; dấu vân tay không đổi)
+HOLDOUT_EXCLUDED_FILE = Path(__file__).resolve().parent.parent / "goal" / "holdout_excluded.yaml"
+
+
+def holdout_excluded(path: Path | None = None) -> set[str]:
+    p = Path(path) if path else HOLDOUT_EXCLUDED_FILE
+    if not p.exists():
+        return set()
+    import yaml
+
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    return {str(e["id"]) for e in data.get("excluded") or []}
 
 
 @dataclass
@@ -127,6 +139,9 @@ def load_manifest(
     _check_doc_leakage(items)
     if split:
         items = [it for it in items if it.split == split]
+    if split == "holdout":
+        bad = holdout_excluded()
+        items = [it for it in items if it.id not in bad]
     if categories:
         wanted = set(categories)
         items = [it for it in items if it.category in wanted]

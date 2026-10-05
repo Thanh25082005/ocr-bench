@@ -210,3 +210,30 @@ def test_single_model_is_split_across_gpus(project, capsys):
     # chạy lại: không phần nào phải chạy thêm
     main(["run", "--config", cfg_path, "--models", "oracle", "--gpus", "0,1", "--no-score"])
     assert len((project / "runs/dev/oracle/predictions.jsonl").read_text().splitlines()) == 7
+
+
+def test_holdout_excluded_items_skipped_only_in_holdout(tmp_path, monkeypatch):
+    """Mẫu holdout đã bị xem: không tính khi chấm holdout; dev và dấu vân tay không đổi."""
+    import json
+
+    from ocrbench import dataset as D
+
+    (tmp_path / "a.png").write_bytes(b"")
+    rows = [{"id": f"c/{i}", "image": "a.png", "category": "c", "gt": "x", "doc_id": f"d{i}",
+             "split": "holdout" if i < 3 else "dev"} for i in range(5)]
+    m = tmp_path / "m.jsonl"
+    m.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    fp = D.fingerprint(D.load_manifest(m))
+    ex = tmp_path / "ex.yaml"
+    ex.write_text("excluded:\n  - id: c/1\n    reason: test\n")
+    monkeypatch.setattr(D, "HOLDOUT_EXCLUDED_FILE", ex)
+    assert [it.id for it in D.load_manifest(m, split="holdout")] == ["c/0", "c/2"]
+    assert len(D.load_manifest(m, split="dev")) == 2
+    assert D.fingerprint(D.load_manifest(m)) == fp
+
+
+def test_real_holdout_exclusions_are_valid_ids():
+    from ocrbench.dataset import holdout_excluded
+
+    ids = holdout_excluded()
+    assert "pub_tables_en/pubtabnet__552595" in ids and all("/" in i for i in ids)

@@ -1,0 +1,12 @@
+# Mẫu HOLDOUT đã bị xem (ảnh hoặc đáp án) → KHÔNG tính vào lần chấm cuối (ocrbench run/score --split holdout).
+# Dấu vân tay bộ test và split dev không đổi. CHỈ con người được sửa file này (nằm trong khoá goal/GOAL_LOCK.sha256).
+excluded:
+  - id: pub_tables_en/pubtabnet__552595
+    date: 2026-10-05
+    reason: người dùng cho phép xem ảnh + đáp án để gỡ lỗi "ký tự nhỏ trước số 105" (đã chạy trên web demo)
+  - id: pub_tables_en/pubtabnet__549549
+    date: 2026-10-05
+    reason: người dùng thử ảnh này trên web demo; assistant lỡ so kết quả với đáp án
+  - id: pub_tables_en/pubtabnet__551879
+    date: 2026-10-05
+    reason: người dùng thử ảnh này trên web demo; assistant lỡ so kết quả với đáp án

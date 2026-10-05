@@ -30,6 +30,7 @@ QUEUE_FILE = CODE_DIR / "goal" / "queue.yaml"
 LOCK_FILE = CODE_DIR / "goal" / "GOAL_LOCK.sha256"
 LOCKED_FILES = [
     "goal/queue.yaml",
+    "goal/holdout_excluded.yaml",
     "ocrbench/goal.py",
     "ocrbench/benchmark.py",
     "ocrbench/metrics.py",
