@@ -14,6 +14,13 @@ sherif1313...), HunyuanOCR, Gemma 3... Cấu hình ví dụ:
       max_image_side: 1600        # thu nhỏ ảnh quá lớn (tiết kiệm VRAM), null = giữ nguyên
       processor_kwargs: {max_pixels: 1605632}
 
+Model trả kết quả dạng BỐ CỤC (dots.ocr / dots.mocr, xem ocrbench/layout.py):
+
+      output_format: layout_json  # JSON [{bbox, category, text}] → văn bản Markdown + extra.blocks (bbox ảnh gốc)
+      layout_drop: []             # loại khối bỏ khỏi văn bản, vd. [Page-header, Page-footer]
+      local_alias: DotsMOCR       # nạp qua thư mục tên không có dấu chấm (code remote của dots cần vậy)
+      patches: [dots_vision]      # vá code model để chạy trên T4, xem adapters/patches.py
+
 Lưu ý với T4 (Kaggle): không có bf16 thật, nên dtype=auto sẽ chọn float16. Một số model
 huấn luyện bằng bf16 có thể tràn số ở fp16 (ra chữ rỗng hoặc ký tự rác); khi đó thử
 dtype: float32 (chậm, tốn VRAM gấp đôi) hoặc quantization: 4bit.
@@ -54,6 +61,12 @@ class HFVLMAdapter(Adapter):
         "stop_on_loop": False,    # dừng sinh khi phát hiện vòng lặp (đoạn ≤ loop_max_period token lặp liên tiếp)
         "loop_max_period": 60,
         "loop_min_span": 240,     # vòng lặp phải dài ít nhất chừng này token mới dừng (tránh cắt nhầm bảng nhiều ô trống)
+        # --- kết quả dạng bố cục / model cần vá ---
+        "output_format": "text",  # text | layout_json
+        "layout_drop": [],
+        "local_alias": None,
+        "patches": [],
+        "vision_dtype": "float32",  # dtype bộ mã hoá ảnh khi dùng bản vá dots_vision
     }
 
     def load(self):
@@ -89,10 +102,23 @@ class HFVLMAdapter(Adapter):
         elif p["quantization"]:
             raise ValueError(f"quantization không hợp lệ: {p['quantization']!r} (null | 4bit | 8bit)")
 
+        from .patches import PATCHES
+
+        unknown = [x for x in p["patches"] if x not in PATCHES]
+        if unknown:
+            raise ValueError(f"patches không có: {unknown}. Có: {sorted(PATCHES)}")
+        model_path = _alias_dir(p["model_id"], p["local_alias"]) if p["local_alias"] else p["model_id"]
+        if p["patches"]:
+            config = transformers.AutoConfig.from_pretrained(model_path, trust_remote_code=p["trust_remote_code"])
+            for name in p["patches"]:
+                PATCHES[name][0](config)
+            kwargs["config"] = config
         self._processor = transformers.AutoProcessor.from_pretrained(
-            p["processor_id"] or p["model_id"], trust_remote_code=p["trust_remote_code"], **p["processor_kwargs"]
+            p["processor_id"] or model_path, trust_remote_code=p["trust_remote_code"], **p["processor_kwargs"]
         )
-        self._model = self._model_class(transformers, p["model_class"]).from_pretrained(p["model_id"], **kwargs)
+        self._model = self._model_class(transformers, p["model_class"]).from_pretrained(model_path, **kwargs)
+        for name in p["patches"]:
+            PATCHES[name][1](self._model, getattr(torch, p["vision_dtype"]))
         if p["adapter_id"]:
             from peft import PeftModel
 
@@ -143,7 +169,7 @@ class HFVLMAdapter(Adapter):
             inputs = self._processor(text=texts, images=list(images), return_tensors="pt", padding=True)
         finally:
             tok.padding_side = old_side
-        return self._run(inputs, n_rows=len(images))
+        return self._run(inputs, n_rows=len(images), sizes=[im.size for im in images])
 
     def predict_pages(self, images, item):
         if self.params["multi_page"] == "per_page":
@@ -167,9 +193,9 @@ class HFVLMAdapter(Adapter):
                 self._messages(item, images, embed_images=False), add_generation_prompt=True, tokenize=False
             )
             inputs = self._processor(text=[text], images=list(images), return_tensors="pt")
-        return self._run(inputs, n_rows=1)[0]
+        return self._run(inputs, n_rows=1, sizes=[images[0].size] if len(images) == 1 else None)[0]
 
-    def _run(self, inputs, n_rows: int):
+    def _run(self, inputs, n_rows: int, sizes=None):
         torch, p = self._torch, self.params
         inputs = inputs.to(self._model.device)
         for k, v in inputs.items():
@@ -203,8 +229,26 @@ class HFVLMAdapter(Adapter):
             extra = {"new_tokens": n_new, "hit_max_tokens": n_new >= p["max_new_tokens"]}
             if loop is not None and loop.stopped[r]:
                 extra["stopped_loop"] = True  # trang đã bị lặp: kết quả cần người duyệt
-            preds.append(Prediction(self.postprocess(texts[r]), extra=extra))
+            text = self.postprocess(texts[r])
+            if p["output_format"] == "layout_json":
+                text = self._layout(text, sizes[r] if sizes else None, extra)
+            preds.append(Prediction(text, extra=extra))
         return preds
+
+    def _layout(self, raw: str, size, extra: dict) -> str:
+        from ..layout import blocks_to_markdown, parse_layout
+
+        ip = getattr(self._processor, "image_processor", None)
+        size_cfg = getattr(ip, "size", None)
+        size_cfg = dict(size_cfg) if isinstance(size_cfg, dict) else {}
+        min_px = getattr(ip, "min_pixels", None) or size_cfg.get("shortest_edge") or 3136
+        max_px = getattr(ip, "max_pixels", None) or size_cfg.get("longest_edge") or 11289600
+        blocks, status = parse_layout(raw, size, min_pixels=min_px, max_pixels=max_px)
+        extra["layout"] = status
+        extra["blocks"] = [b.to_dict(with_text=False) for b in blocks]
+        if status == "failed":
+            return raw  # không đọc được khối nào: giữ nguyên để người duyệt / chấm điểm vẫn thấy chữ
+        return blocks_to_markdown(blocks, drop=tuple(self.params["layout_drop"]))
 
     def close(self):
         del self._model
@@ -241,3 +285,27 @@ class _LoopStop:
                     self.stopped[r] = True
                     break
         return torch.tensor(self.stopped, device=input_ids.device)
+
+
+def _alias_dir(model_id: str, alias: str) -> str:
+    """Tải model về cache HF rồi trỏ một thư mục tên `alias` (không dấu chấm) tới bản đó.
+    Code remote của dots.ocr/dots.mocr lấy tên thư mục làm tên module Python, nên 'dots.mocr' bị lỗi import.
+    Dùng symlink nên `ocrbench clean-cache` xoá cache HF là xoá luôn trọng số."""
+    import os
+    import tempfile
+    from pathlib import Path
+
+    from huggingface_hub import snapshot_download
+
+    if os.path.isdir(model_id):
+        src = Path(model_id)
+    else:
+        src = Path(snapshot_download(model_id))
+    link = Path(tempfile.gettempdir()) / "ocrbench_models" / alias
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink() or link.exists():
+        if link.resolve() == src.resolve():
+            return str(link)
+        link.unlink()
+    link.symlink_to(src, target_is_directory=True)
+    return str(link)

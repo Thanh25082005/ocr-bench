@@ -23,11 +23,13 @@ CSS = """
 def build_app(converter: Converter):
     import gradio as gr
 
-    def run(files, use_text_layer, doc_type, pages, progress=gr.Progress()):
+    modes = list(converter.modes)
+
+    def run(files, use_text_layer, doc_type, pages, mode=None, progress=gr.Progress()):
         if not files:
             raise gr.Error("Chưa có file nào. Kéo thả PDF hoặc ảnh vào ô phía trên.")
         out_dir = Path(tempfile.mkdtemp(prefix="ocr_docx_"))
-        docx_files, rows, previews = [], [], []
+        docx_files, rows, previews, layouts = [], [], [], []
         t0 = time.perf_counter()
         for f in files:
             path = Path(f if isinstance(f, str) else f.name)
@@ -37,18 +39,22 @@ def build_app(converter: Converter):
 
             try:
                 res = converter.convert_file(path, out_dir, force_ocr=not use_text_layer, pages=pages or None,
-                                             doc_type="table" if doc_type == "Có bảng" else "text", progress=step)
+                                             doc_type="table" if doc_type == "Có bảng" else "text", progress=step,
+                                             mode=mode or None)
             except Exception as e:
                 rows.append([path.name, "—", "lỗi", 0.0, f"{type(e).__name__}: {e}"])
                 continue
             docx_files.append(str(res.docx))
             for p in res.pages:
                 rows.append([path.name, p.index, p.source, round(p.seconds, 1), p.error or p.note or ""])
+                if p.layout_image:
+                    layouts.append((str(p.layout_image), f"{path.name} · trang {p.index}"))
             first = next((p for p in res.pages if p.text), None)
             if first:
                 previews.append(f"### {path.name} — trang {first.index} ({first.source})\n\n{first.text[:3000]}")
         summary = f"Xong {len(docx_files)}/{len(files)} file trong {time.perf_counter() - t0:.0f} giây."
-        return docx_files, rows, summary + "\n\n" + ("\n\n---\n\n".join(previews) or "_(không có chữ để xem trước)_")
+        return (docx_files, rows, summary + "\n\n" + ("\n\n---\n\n".join(previews) or "_(không có chữ để xem trước)_"),
+                layouts)
 
     with gr.Blocks(title="OCR → DOCX") as demo:
         gr.Markdown(
@@ -65,12 +71,16 @@ def build_app(converter: Converter):
             doc_type = gr.Radio(["Văn bản", "Có bảng"], value="Văn bản", label="Loại tài liệu",
                                 info="Chọn prompt cho model (nếu config có prompt riêng cho bảng)")
             pages = gr.Textbox(label="Trang", placeholder="vd. 1-3,5 · để trống = tất cả")
+        mode = gr.Radio(modes, value=modes[0] if modes else None, label="Chế độ đọc",
+                        info="Bố cục: model trả từng khối (tiêu đề, đoạn, bảng...) kèm vị trí trên trang",
+                        visible=bool(modes))
         btn = gr.Button("Chuyển sang DOCX", variant="primary")
         out = gr.File(label="Tải DOCX", file_count="multiple")
         table = gr.Dataframe(headers=["File", "Trang", "Nguồn", "Giây", "Lỗi / cần soát"], label="Chi tiết từng trang",
                              interactive=False, wrap=True)
         preview = gr.Markdown(label="Xem trước")
-        btn.click(run, [files, use_text_layer, doc_type, pages], [out, table, preview])
+        layout = gr.Gallery(label="Bố cục từng trang (khung + thứ tự đọc)", columns=3, height="auto")
+        btn.click(run, [files, use_text_layer, doc_type, pages, mode], [out, table, preview, layout])
     demo.queue(default_concurrency_limit=1)  # một GPU: xử lý lần lượt từng yêu cầu
     return demo
 

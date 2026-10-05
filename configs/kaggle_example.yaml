@@ -107,6 +107,44 @@ models:
       preprocess: true
       preprocess_reuse: sherif_handwriting
 
+  # dots.mocr (= dots.ocr 1.5, ~3 tỉ tham số): đọc BỐ CỤC cả trang — từng khối (tiêu đề, đoạn, bảng HTML...)
+  # kèm bbox, theo thứ tự đọc (ocrbench/layout.py). Code gốc cần FlashAttention + bf16 → bản vá dots_vision cho T4.
+  # ⚠ Giấy phép trọng số (dots.mocr LICENSE AGREEMENT 5.2): cấm xử lý dữ liệu cá nhân nhạy cảm khi chưa có đồng ý
+  #   + ẩn danh hoá → chạy benchmark trên bộ test thì được; dùng cho tài liệu thật phải hỏi pháp lý trước.
+  - name: dots_mocr
+    adapter: hf_vlm
+    params:
+      model_id: dots-studio/dots.mocr
+      local_alias: DotsMOCR        # code remote lấy tên thư mục làm tên module: không được có dấu chấm
+      model_class: AutoModelForCausalLM
+      trust_remote_code: true
+      patches: [dots_vision]
+      output_format: layout_json
+      max_new_tokens: 8192
+      stop_on_loop: true
+      loop_min_span: 600           # bảng HTML nhiều ô trống lặp hợp lệ, đừng cắt nhầm
+      prompt: |
+        Please output the layout information from the PDF image, including each layout element's bbox, its category, and the corresponding text content within the bbox.
+
+        1. Bbox format: [x1, y1, x2, y2]
+
+        2. Layout Categories: The possible categories are ['Caption', 'Footnote', 'Formula', 'List-item', 'Page-footer', 'Page-header', 'Picture', 'Section-header', 'Table', 'Text', 'Title'].
+
+        3. Text Extraction & Formatting Rules:
+            - Picture: For the 'Picture' category, the text field should be omitted.
+            - Formula: Format its text as LaTeX.
+            - Table: Format its text as HTML.
+            - All Others (Text, Title, etc.): Format their text as Markdown.
+
+        4. Constraints:
+            - The output text must be the original text from the image, with no translation.
+            - All layout elements must be sorted according to human reading order.
+
+        5. Final Output: The entire output must be a single JSON object.
+      modes:                       # cho giao diện / ocrbench convert --mode
+        Bố cục đầy đủ: {}
+        Chỉ chữ: {prompt: "Extract the text content from this image.", output_format: text}
+
   # amad-vlm6: 8,3 tỉ tham số, ~16,6 GB ở fp16 -> không vừa 1 card T4.
   # Cách 1: chia trên 2 GPU (giữ nguyên chất lượng, chiếm cả 2 card).
   - name: amad_vlm6

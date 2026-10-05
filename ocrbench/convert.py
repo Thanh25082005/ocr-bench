@@ -39,6 +39,8 @@ class PageResult:
     seconds: float
     error: str | None = None
     note: str | None = None  # vd. "bị cắt", "model bị lặp" → người duyệt cần soát trang này
+    blocks: list | None = None  # chế độ bố cục: [{category, bbox}] theo thứ tự đọc
+    layout_image: Path | None = None  # ảnh trang có khung từng khối (để đối chiếu)
 
 
 @dataclass
@@ -80,6 +82,8 @@ class Converter:
         self.batch = max(1, int(self.params.get("batch_size", 1)))
         self.max_side = self.params.get("max_image_side")
         self.pre_cfg = preprocess_config(self.params.get("preprocess"))  # giống hệt lúc chạy benchmark
+        # chế độ đọc (kiểu dots.ocr): params.modes = {tên: {prompt, output_format, ...}}; mục đầu là mặc định
+        self.modes = dict(self.params.get("modes") or {})
         devices = self._devices(gpus)
         if len(devices) > 1:
             self.adapters = [create_adapter(self.spec.adapter, {**self.params, "device_map": {"": f"cuda:{d}"}})
@@ -92,6 +96,15 @@ class Converter:
         for a in self.adapters:
             a.load()
         self.load_s = time.perf_counter() - t
+        self._base = [dict(a.params) for a in self.adapters]
+
+    def set_mode(self, mode: str | None) -> None:
+        """Đổi prompt / kiểu kết quả cho các lần chuyển sau (không nạp lại model)."""
+        if mode and mode not in self.modes:
+            raise ValueError(f"không có chế độ '{mode}'. Có: {list(self.modes)}")
+        over = self.modes.get(mode, {}) if mode else {}
+        for a, base in zip(self.adapters, self._base):
+            a.params = merge_params(base, over)
 
     @property
     def adapter(self):
@@ -150,13 +163,15 @@ class Converter:
         return image, Item(id=f"{path.name}#p{n}", image=path, category=f"app_{doc_type}", gt="", gt_type=gt_type)
 
     def convert_file(self, path: str | Path, out_dir: str | Path, force_ocr: bool = False, pages: str | None = None,
-                     doc_type: str = "text", progress=None) -> FileResult:
+                     doc_type: str = "text", progress=None, mode: str | None = None) -> FileResult:
         path, out_dir = Path(path), Path(out_dir)
+        if self.modes or mode:
+            self.set_mode(mode)
         out_dir.mkdir(parents=True, exist_ok=True)
         result = FileResult(path)
         page_list, close = self._open(path, pages)
         try:
-            self._convert_pages(path, page_list, result, force_ocr, doc_type, progress)
+            self._convert_pages(path, page_list, result, force_ocr, doc_type, progress, out_dir)
         finally:
             close()
         doc = new_document(title=path.stem)
@@ -169,7 +184,7 @@ class Converter:
         doc.save(result.docx)
         return result
 
-    def _convert_pages(self, path, page_list, result, force_ocr, doc_type, progress):
+    def _convert_pages(self, path, page_list, result, force_ocr, doc_type, progress, out_dir=None):
         """Trang có lớp chữ dùng được → lấy luôn; trang còn lại gom thành batch, chia cho các GPU chạy song song."""
         slots: list[PageResult | None] = [None] * len(page_list)
         todo = []  # (vị trí, số trang, hàm dựng ảnh)
@@ -193,7 +208,14 @@ class Converter:
                 except Exception as e:
                     slots[k] = PageResult(n, "lỗi", "", 0.0, f"{type(e).__name__}: {e}")
             batches = [ready[i:i + self.batch] for i in range(0, len(ready), self.batch)]
+            images = {k: img for k, n, img, item in ready}
             for k, res in self._run_batches(batches):
+                if res.blocks and out_dir is not None:
+                    from .layout import Block, draw_blocks
+
+                    res.layout_image = Path(out_dir) / f"{path.stem}_trang{res.index}_bocuc.jpg"
+                    draw_blocks(images[k], [Block(b["category"], "", b.get("bbox")) for b in res.blocks]).save(
+                        res.layout_image, quality=85)
                 slots[k] = res
             done += len(part)
         result.pages.extend(slots)
@@ -247,7 +269,11 @@ def _page_result(n: int, pred, seconds: float) -> PageResult:
         notes.append("model bị lặp, đã dừng sớm")
     if pred.extra.get("hit_max_tokens"):
         notes.append("bị cắt do hết max_new_tokens")
-    return PageResult(n, "OCR", pred.text, seconds, note="; ".join(notes) or None)
+    if pred.extra.get("layout") == "repaired":
+        notes.append("JSON bố cục bị hỏng, đã nhặt lại các khối đọc được")
+    elif pred.extra.get("layout") == "failed":
+        notes.append("không đọc được bố cục, giữ nguyên kết quả thô")
+    return PageResult(n, "OCR", pred.text, seconds, note="; ".join(notes) or None, blocks=pred.extra.get("blocks"))
 
 
 def merge_params(base: dict, override: dict) -> dict:

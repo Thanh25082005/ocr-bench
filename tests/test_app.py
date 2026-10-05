@@ -169,3 +169,36 @@ def test_batch_failure_falls_back_per_page(tmp_path):
     assert conv.fallbacks >= 1
     assert res.pages[1].note == "model bị lặp, đã dừng sớm"
     assert "CẦN SOÁT" in Document(res.docx).element.xml
+
+
+class FakeLayout(Adapter):
+    """Giả model bố cục: chế độ 'layout' trả khối + bbox, chế độ khác trả chữ thường."""
+
+    def predict(self, image, item):
+        if self.params.get("output_format") == "layout_json":
+            return Prediction("# Invoice\n\nTotal: 5", extra={"layout": "ok", "blocks": [
+                {"category": "Title", "bbox": [10, 10, 200, 40]}, {"category": "Text", "bbox": [10, 60, 200, 90]}]})
+        return Prediction(f"plain: {self.params.get('prompt')}")
+
+
+def test_reading_modes_and_layout_overlay(tmp_path):
+    (tmp_path / "m.jsonl").write_text("")
+    (tmp_path / "c.yaml").write_text(yaml.safe_dump({"dataset": "m.jsonl", "models": [{
+        "name": "lay", "adapter": "tests.test_app:FakeLayout",
+        "params": {"prompt": "LAYOUT", "output_format": "layout_json",
+                   "modes": {"Bố cục đầy đủ": {}, "Chỉ chữ": {"prompt": "TEXT", "output_format": "text"}}}}]}))
+    conv = Converter(tmp_path / "c.yaml", "lay")
+    Image.new("RGB", (300, 300), "white").save(tmp_path / "a.png")
+    res = conv.convert_file(tmp_path / "a.png", tmp_path / "o")  # chế độ mặc định = bố cục
+    p = res.pages[0]
+    assert p.text.startswith("# Invoice") and p.blocks[0]["category"] == "Title" and p.layout_image.exists()
+    res = conv.convert_file(tmp_path / "a.png", tmp_path / "o", mode="Chỉ chữ")
+    assert res.pages[0].text == "plain: TEXT" and res.pages[0].layout_image is None
+    res = conv.convert_file(tmp_path / "a.png", tmp_path / "o")  # quay lại mặc định
+    assert res.pages[0].blocks
+    with pytest.raises(ValueError):
+        conv.convert_file(tmp_path / "a.png", tmp_path / "o", mode="không có")
+    pytest.importorskip("gradio")
+    from ocrbench.app import build_app
+
+    assert build_app(conv) is not None
