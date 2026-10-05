@@ -13,7 +13,7 @@ from html.parser import HTMLParser
 ALLOWED_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "br", "hr", "ul", "ol", "li", "b", "strong", "i", "em",
                 "u", "s", "sub", "sup", "code", "pre", "blockquote", "span", "div", "table", "thead", "tbody",
                 "tfoot", "tr", "td", "th", "caption"}
-ALLOWED_ATTRS = {"colspan", "rowspan", "dir", "align"}
+ALLOWED_ATTRS = {"colspan", "rowspan", "dir", "align", "type", "start"}  # type/start: <ol type="a"> = a, b, c
 VOID = {"br", "hr"}
 DROP_CONTENT = {"script", "style", "iframe", "object", "embed", "svg", "math", "img", "video", "audio", "form"}
 

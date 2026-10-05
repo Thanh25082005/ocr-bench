@@ -244,3 +244,26 @@ def test_ocr_html_is_sanitized_and_renders_tables():
                    '<script>alert(1)</script><img src=x onerror=alert(1)><a href="javascript:x">l</a>\n\n| a | b |\n|---|---|\n| 1 | 2 |')
     assert "<h1>T</h1>" in out and '<td colspan="2">a</td>' in out and "<th>a</th>" in out
     assert "script" not in out and "onerror" not in out and "onclick" not in out and "javascript" not in out
+
+
+def test_lists_inside_table_cells_keep_numbering(tmp_path):
+    """<ol type="a"> trong ô bảng (dots xuất vậy cho danh sách a, b, c): web giữ type, DOCX giữ 1./a. và xuống dòng."""
+    html = ('<table><tr><td>Mean (sd)<br>[Range]</td></tr><tr><td><ol><li>Unwillingness:<ol type="a">'
+            '<li>Not liking change</li><li>Age</li></ol></li><li>Excuses</li></ol></td></tr></table>')
+    d = new_document("t")
+    add_page(d, html, header="h", first=True)
+    d.save(tmp_path / "x.docx")
+    t = Document(tmp_path / "x.docx").tables[0]
+    assert t.cell(0, 0).text == "Mean (sd)\n[Range]"
+    assert t.cell(1, 0).text == "1. Unwillingness:\n    a. Not liking change\n    b. Age\n2. Excuses"
+    pytest.importorskip("markdown_it")
+    from ocrbench.viewer import ocr_html
+
+    assert '<ol type="a">' in ocr_html(html)
+
+
+def test_list_markers():
+    from ocrbench.docx_export import _list_marker
+
+    assert [_list_marker(k, n) for k, n in [("1", 3), ("a", 1), ("a", 27), ("A", 2), ("i", 4), ("I", 9), ("ul", 5)]] == \
+        ["3.", "a.", "aa.", "B.", "iv.", "IX.", "•"]

@@ -37,6 +37,85 @@ def is_rtl(text: str) -> bool:
     return len(_ARABIC.findall(text)) > len(_LATIN.findall(text))
 
 
+def _list_marker(kind: str, n: int) -> str:
+    """Số thứ tự của <li> theo <ol type>: 1 → 1. · a → a. · A → A. · i → i. · I → I. · ul → •"""
+    if kind == "ul":
+        return "•"
+    if kind in ("a", "A"):
+        s, x = "", n
+        while x > 0:
+            x, r = divmod(x - 1, 26)
+            s = chr(97 + r) + s
+        return (s if kind == "a" else s.upper()) + "."
+    if kind in ("i", "I"):
+        vals = [(1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"), (90, "xc"), (50, "l"), (40, "xl"),
+                (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i")]
+        s, x = "", n
+        for v, sym in vals:
+            while x >= v:
+                s, x = s + sym, x - v
+        return (s if kind == "i" else s.upper()) + "."
+    return f"{n}."
+
+
+def _cell_text(el) -> str:
+    """Chữ trong một ô bảng HTML, GIỮ xuống dòng (<br>, <p>) và số thứ tự danh sách (<ol type="a"> → a. b. c.,
+    danh sách lồng thì thụt lề). Trước đây dùng text_content() → các mục dính liền, mất 1. 2. / a. b."""
+    out: list[str] = []
+
+    def nl():
+        if out and not out[-1].endswith("\n"):
+            out.append("\n")
+
+    def walk(node, depth):
+        tag = node.tag.lower() if isinstance(node.tag, str) else ""
+        if tag == "br":
+            nl()
+        elif tag in ("ol", "ul"):
+            kind = "ul" if tag == "ul" else (node.get("type") or "1")
+            try:
+                n = int(node.get("start") or 1)
+            except ValueError:
+                n = 1
+            if node.text and node.text.strip():
+                out.append(node.text)
+            for li in node:
+                if not isinstance(li.tag, str) or li.tag.lower() != "li":
+                    continue
+                nl()
+                out.append("    " * depth + _list_marker(kind, n) + " ")
+                if li.text:
+                    out.append(li.text)
+                for ch in li:
+                    walk(ch, depth + 1)
+                n += 1
+            nl()
+        else:
+            block = tag in ("p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6")
+            if block:
+                nl()
+            if node.text:
+                out.append(node.text)
+            for ch in node:
+                walk(ch, depth)
+            if block:
+                nl()
+        if node.tail:
+            out.append(node.tail)
+
+    if el.text:
+        out.append(el.text)
+    for ch in el:
+        walk(ch, 0)
+    lines = []
+    for line in "".join(out).split("\n"):
+        indent = len(line) - len(line.lstrip(" "))
+        body = " ".join(line.split())
+        if body:
+            lines.append(" " * indent + body)
+    return "\n".join(lines)
+
+
 def _html_table_rows(table_html: str) -> list[list[tuple[str, int]]]:
     from lxml import html as lh
 
@@ -49,7 +128,7 @@ def _html_table_rows(table_html: str) -> list[list[tuple[str, int]]]:
                 span = max(1, int(td.get("colspan", 1)))
             except ValueError:
                 span = 1
-            cells.append((" ".join(td.text_content().split()), span))
+            cells.append((_cell_text(td), span))
         if cells:
             rows.append(cells)
     return rows
