@@ -47,7 +47,7 @@ SKIP_REASONS = {
     "GATED_OR_LICENSE": "model yêu cầu quyền truy cập / giấy phép mà con người chưa cấp",
     "DEPENDENCY_CONFLICT": "xung đột thư viện không giải quyết được bằng venv riêng",
 }
-HF_ADAPTERS = {"hf_vlm"}
+HF_ADAPTERS = {"hf_vlm", "dots"}  # adapter tải trọng số từ Hugging Face (clean-cache xoá được)
 CHECK_GIT = True  # kiểm tra code của tool không bị sửa (tắt trong test)
 
 

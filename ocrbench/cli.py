@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 
 from .config import load_config
 from .dataset import fingerprint, load_manifest, make_manifest, summarize
@@ -170,6 +171,29 @@ def cmd_convert(a):
               + (f", {n_err} LỖI" if n_err else "") + ")")
 
 
+def cmd_dots_parse(a):
+    """Như `python dots_ocr/parser.py <file> --prompt ...` của dots.ocr, chạy bằng HF transformers trên T4."""
+    from .adapters.dots import DotsAdapter, parse_file
+    from .convert import merge_params
+
+    params = {}
+    if a.config and a.model:
+        params = load_config(a.config).model(a.model).params
+    params = merge_params(params, _params(a.set))
+    if a.no_fitz_preprocess:
+        params["fitz_preprocess"] = False
+    elif a.fitz_preprocess:
+        params["fitz_preprocess"] = True
+    adapter = DotsAdapter(**params)
+    adapter.load()
+    for f in a.inputs:
+        res = parse_file(adapter, f, a.output, prompt_mode=a.prompt, bbox=a.bbox, dpi=a.dpi)
+        print(f"✔ {f}: {len(res)} trang → {a.output}/{Path(f).stem}/"
+              + (f"  (⚠ {sum(1 for r in res if r.get('filtered'))} trang JSON hỏng)" if any(r.get('filtered') for r in res)
+                 else ""))
+    adapter.close()
+
+
 def cmd_serve(a):
     from .app import serve
 
@@ -283,6 +307,23 @@ def main(argv=None):
     p.add_argument("--set", action="append", help="ghi đè tham số model, vd. --set batch_size=4 --set stop_on_loop=true")
     p.add_argument("--gpus", default="auto", help="auto = mọi GPU (một bản model mỗi GPU); vd. 0 hoặc 0,1")
     p.set_defaults(func=cmd_convert)
+
+    p = sub.add_parser("dots-parse", help="chạy dots.ocr/dots.mocr giống tool gốc (json, jpg bố cục, md, _nohf.md)")
+    p.add_argument("inputs", nargs="+", help="PDF / jpg / png")
+    p.add_argument("-o", "--output", default="dots_out")
+    p.add_argument("--prompt", default=None,
+                   choices=["prompt_layout_all_en", "prompt_layout_only_en", "prompt_ocr", "prompt_grounding_ocr",
+                            "prompt_web_parsing", "prompt_scene_spotting", "prompt_image_to_svg", "prompt_general"],
+                   help="chế độ (mặc định: prompt_mode trong config, hoặc prompt_layout_all_en)")
+    p.add_argument("--bbox", type=int, nargs=4, metavar=("x1", "y1", "x2", "y2"), help="cho prompt_grounding_ocr")
+    p.add_argument("--config", help="lấy tham số từ mục model trong config (vd. dots_mocr)")
+    p.add_argument("--model", help="tên mục model trong config")
+    p.add_argument("--dpi", type=int, default=200)
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--fitz-preprocess", action="store_true", help="như tool gốc mặc định: render lại ảnh theo dpi")
+    g.add_argument("--no-fitz-preprocess", action="store_true")
+    p.add_argument("--set", action="append", help="ghi đè tham số, vd. --set max_new_tokens=16384")
+    p.set_defaults(func=cmd_dots_parse)
 
     p = sub.add_parser("serve", help="giao diện web: kéo thả PDF/ảnh → tải DOCX")
     p.add_argument("--config", required=True)

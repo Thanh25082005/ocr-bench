@@ -52,7 +52,7 @@ git -C "$CODE" log --oneline -1
 step "Thư viện"
 command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux >/dev/null)
 command -v tesseract >/dev/null || (apt-get update -qq && apt-get install -y -qq tesseract-ocr tesseract-ocr-ara >/dev/null)
-python -m pip install -q -e "$CODE[teds,hf,tesseract,easyocr,testset,app]"
+python -m pip install -q -e "$CODE[teds,hf,tesseract,easyocr,testset,app,dots]"
 python -c "import torch, transformers; print('torch', torch.__version__, '| transformers', transformers.__version__, '| CUDA', torch.cuda.is_available())"
 
 step "Bộ test"

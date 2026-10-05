@@ -111,7 +111,7 @@ class Converter:
         return self.adapters[0]
 
     def _devices(self, gpus) -> list[int]:
-        if gpus is None or self.spec.adapter != "hf_vlm" or self.spec.gpus > 1 or self.params.get("quantization"):
+        if gpus is None or self.spec.adapter not in ("hf_vlm", "dots") or self.spec.gpus > 1 or self.params.get("quantization"):
             return []
         try:
             import torch

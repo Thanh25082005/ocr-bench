@@ -107,6 +107,7 @@ BUILTIN = {
     "paddleocr_vl": "ocrbench.adapters.paddle:PaddleOCRVLAdapter",
     "surya": "ocrbench.adapters.surya_adapter:SuryaAdapter",
     "hf_vlm": "ocrbench.adapters.hf_vlm:HFVLMAdapter",
+    "dots": "ocrbench.adapters.dots:DotsAdapter",
     "openai_api": "ocrbench.adapters.openai_api:OpenAIAPIAdapter",
     "command": "ocrbench.adapters.command:CommandAdapter",
 }

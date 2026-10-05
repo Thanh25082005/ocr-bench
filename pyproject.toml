@@ -20,6 +20,7 @@ tesseract = ["pytesseract"]
 easyocr = ["easyocr"]
 paddle = ["paddleocr>=3.3"]
 surya = ["surya-ocr"]
+dots = ["pymupdf", "qwen-vl-utils", "pydantic"]   # adapter dots (dots.ocr / dots.mocr, giống source gốc)
 api = ["requests"]
 testset = ["datasets>=3", "playwright", "numpy", "lxml>=5", "gdown>=5"]
 app = ["gradio>=4", "pypdfium2>=4", "python-docx>=1", "lxml>=5"]
