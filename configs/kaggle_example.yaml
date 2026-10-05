@@ -114,8 +114,13 @@ models:
   # Thử tay giống tool gốc: ocrbench dots-parse file.pdf --config C --model dots_mocr --prompt prompt_layout_all_en
   # ⚠ Giấy phép trọng số (dots.mocr LICENSE AGREEMENT 5.2): cấm xử lý dữ liệu cá nhân nhạy cảm khi chưa có đồng ý
   #   + ẩn danh hoá → chạy benchmark trên bộ test thì được; dùng cho tài liệu thật phải hỏi pháp lý trước.
+  # BẮT BUỘC venv transformers==4.56.1 (bản họ ghim; với transformers 5.x model trả chữ rỗng). Tạo một lần:
+  #   python -m pip install -q uv && python -m uv venv /kaggle/working/venvs/dots --system-site-packages
+  #   python -m uv pip install -q -p /kaggle/working/venvs/dots/bin/python "transformers==4.56.1" -e "/kaggle/working/ocr-bench[app,dots]"
+  #   (hoặc chạy bash inference/start.sh một lần — nó tự tạo đúng venv này)
   - name: dots_mocr
     adapter: dots
+    python: /kaggle/working/venvs/dots/bin/python
     params:
       model_id: dots-studio/dots.mocr
       prompt_mode: prompt_layout_all_en

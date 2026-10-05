@@ -9,6 +9,12 @@ Kéo thả PDF / ảnh → model **dots.mocr** đọc bố cục từng trang (t
 | `check.py` | Tự kiểm tra (hoá đơn mẫu có bảng); in ✔/✘ |
 | `config.yaml` | Mục `dots_mocr` (chép nguyên từ `configs/kaggle_example.yaml`, adapter `dots` = giống source gốc) |
 
+## Vì sao có venv riêng
+
+Code của dots (trust_remote_code) viết cho **transformers 4.56.1**. Trên Kaggle (transformers 5.0.0) model nạp
+được, nhận ảnh đúng nhưng phần ngôn ngữ trả **chuỗi rỗng** (chẩn đoán: `inference/diagnose_dots.py`).
+`start.sh` tự tạo `/kaggle/working/venvs/dots` (dùng chung torch/CUDA hệ thống, chỉ thay transformers).
+
 ## Chạy trên Kaggle (2× T4)
 
 ```bash
