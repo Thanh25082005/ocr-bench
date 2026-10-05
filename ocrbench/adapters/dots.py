@@ -14,6 +14,10 @@ Khác source (chỉ để chạy được trên Kaggle T4, không đổi phép t
 - nạp qua thư mục tên không dấu chấm (README của họ cũng yêu cầu vậy);
 - stop_on_loop (tùy chọn, mặc định bật): dừng sinh khi model lặp vòng — JSON dở dang vẫn qua OutputCleaner của họ;
 - strip_images: bỏ ảnh base64 mà layoutjson2md nhúng cho khối Picture khỏi văn bản để chấm điểm.
+- manual_embeds (mặc định bật): tự ghép embedding ảnh vào chuỗi đầu vào (đúng hàm prepare_inputs_embeds của họ)
+  rồi sinh bằng phần ngôn ngữ Qwen2. Code generate của họ chỉ đưa ảnh vào khi `cache_position[0] == 0`
+  — transformers mới không truyền cache_position nữa → model bị lỗi hoặc KHÔNG nhìn thấy ảnh (đọc ra chữ bịa).
+  Kết quả y hệt đường gốc khi đường gốc chạy đúng.
 
 Chế độ (prompt_mode): prompt_layout_all_en (mặc định) · prompt_layout_only_en · prompt_ocr · prompt_grounding_ocr (cần bbox)
 · prompt_web_parsing · prompt_scene_spotting · prompt_image_to_svg · prompt_general.
@@ -62,6 +66,7 @@ class DotsAdapter(Adapter):
         "vision_dtype": "float32",
         "attn_implementation": "sdpa",
         "device_map": "auto",
+        "manual_embeds": True,
     }
 
     def load(self):
@@ -88,6 +93,15 @@ class DotsAdapter(Adapter):
             trust_remote_code=True, **kwargs)
         after(self._model, getattr(torch, p["vision_dtype"]))
         self._model.eval()
+        if p["manual_embeds"]:
+            import types
+
+            from transformers import Qwen2ForCausalLM
+
+            # sinh chữ bằng đường của Qwen2 (inputs_embeds đã có ảnh) — không qua prepare_inputs_for_generation của dots
+            self._model.prepare_inputs_for_generation = types.MethodType(
+                Qwen2ForCausalLM.prepare_inputs_for_generation, self._model)
+            self._model.forward = types.MethodType(Qwen2ForCausalLM.forward, self._model)
         self._processor = transformers.AutoProcessor.from_pretrained(path, trust_remote_code=True, use_fast=True)
         from qwen_vl_utils import process_vision_info
 
@@ -101,8 +115,17 @@ class DotsAdapter(Adapter):
         image_inputs, video_inputs = self._process_vision_info(messages)
         inputs = self._processor(text=[text], images=image_inputs, videos=video_inputs, padding=True,
                                  return_tensors="pt")
+        inputs.pop("mm_token_type_ids", None)  # transformers mới thêm khoá này, model của dots không nhận
         inputs = inputs.to(self._model.device)
         start = inputs["input_ids"].shape[1]
+        if p["manual_embeds"]:
+            ids = inputs["input_ids"]
+            with torch.inference_mode():
+                emb = self._model.prepare_inputs_embeds(ids, inputs["pixel_values"], inputs["image_grid_thw"],
+                                                        ids == self._model.config.image_token_id)
+            gen_inputs = {"input_ids": ids, "inputs_embeds": emb, "attention_mask": inputs["attention_mask"]}
+        else:
+            gen_inputs = dict(inputs)
         gen = {"max_new_tokens": p["max_new_tokens"]}
         loop = None
         if p["stop_on_loop"]:
@@ -118,8 +141,12 @@ class DotsAdapter(Adapter):
 
             gen["stopping_criteria"] = StoppingCriteriaList([_Wrap()])
         with torch.inference_mode():
-            generated_ids = self._model.generate(**inputs, **gen)
-        trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)]
+            generated_ids = self._model.generate(**gen_inputs, **gen)
+        ids = inputs["input_ids"]
+        if generated_ids.shape[1] >= start and torch.equal(generated_ids[:, :start].to(ids.device), ids):
+            trimmed = [generated_ids[0, start:]]
+        else:  # bản transformers chỉ trả phần mới sinh
+            trimmed = [generated_ids[0]]
         response = self._processor.batch_decode(trimmed, skip_special_tokens=True,
                                                 clean_up_tokenization_spaces=False)[0]
         n_new = int(trimmed[0].shape[0])
