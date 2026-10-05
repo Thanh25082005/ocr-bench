@@ -67,6 +67,9 @@ class DotsAdapter(Adapter):
         "attn_implementation": "sdpa",
         "device_map": "auto",
         "manual_embeds": True,
+        # chặn chạy vòng tới max_new_tokens với ảnh nhỏ: tối đa k token sinh ra cho mỗi token ảnh (+512).
+        # Mỗi token ảnh = 28×28 px chứa vài ký tự → k=4 không cắt trang thật. None = tắt (như source gốc)
+        "adaptive_max_tokens": None,
     }
 
     def load(self):
@@ -126,7 +129,11 @@ class DotsAdapter(Adapter):
             gen_inputs = {"input_ids": ids, "inputs_embeds": emb, "attention_mask": inputs["attention_mask"]}
         else:
             gen_inputs = dict(inputs)
-        gen = {"max_new_tokens": p["max_new_tokens"]}
+        max_new = p["max_new_tokens"]
+        if p["adaptive_max_tokens"]:
+            n_img = int((inputs["input_ids"] == self._model.config.image_token_id).sum())
+            max_new = min(max_new, int(p["adaptive_max_tokens"]) * n_img + 512)
+        gen = {"max_new_tokens": max_new}
         loop = None
         if p["stop_on_loop"]:
             from transformers import StoppingCriteria, StoppingCriteriaList
@@ -150,7 +157,7 @@ class DotsAdapter(Adapter):
         response = self._processor.batch_decode(trimmed, skip_special_tokens=True,
                                                 clean_up_tokenization_spaces=False)[0]
         n_new = int(trimmed[0].shape[0])
-        extra = {"new_tokens": n_new, "hit_max_tokens": n_new >= p["max_new_tokens"]}
+        extra = {"new_tokens": n_new, "hit_max_tokens": n_new >= max_new, "max_new_tokens": max_new}
         if loop is not None and loop.stopped[0]:
             extra["stopped_loop"] = True
         return response, extra

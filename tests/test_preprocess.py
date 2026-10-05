@@ -112,3 +112,10 @@ def test_worker_reuses_unchanged_pages(tmp_path):
 
     with pytest.raises(SystemExit):  # tham số khác model gốc → từ chối
         main(["run", "--config", str(cfg), "--models", "echo_bad", "--inline", "--no-score"])
+
+
+def test_upscale_max_factor():
+    cfg = {"flatten": False, "contrast": False, "deskew": False, "upscale_below": 1000, "upscale_to": 1500,
+           "upscale_max_factor": 3.0}
+    out, info = preprocess(_page().resize((245, 90)), cfg)  # ảnh bảng nhỏ: ×3 (trần), không phải ×2
+    assert info["upscale"]["factor"] == 3.0 and out.size == (735, 270)

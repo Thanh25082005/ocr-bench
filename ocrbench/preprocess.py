@@ -38,6 +38,7 @@ DEFAULTS = {
     "upscale": True,
     "upscale_below": 1200,
     "upscale_to": 1600,
+    "upscale_max_factor": 2.0,
 }
 
 
@@ -214,6 +215,6 @@ def _upscale(img, c, info):
     long_side = max(img.size)
     if long_side >= c["upscale_below"]:
         return img
-    s = min(2.0, c["upscale_to"] / long_side)
+    s = min(c["upscale_max_factor"], c["upscale_to"] / long_side)
     info["upscale"] = {"factor": round(s, 2)}
     return img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
