@@ -1,0 +1,19 @@
+# Config cho web demo dots.mocr (ocrbench serve). Mục dots_mocr chép NGUYÊN từ configs/kaggle_example.yaml.
+# dataset/output_dir không dùng khi demo (chỉ để config hợp lệ).
+dataset: inference/khong_dung.jsonl
+output_dir: /kaggle/working/inference_runs
+models:
+- name: dots_mocr
+  adapter: dots
+  params:
+    model_id: dots-studio/dots.mocr
+    prompt_mode: prompt_layout_all_en
+    fitz_preprocess: false
+    max_new_tokens: 24000
+    stop_on_loop: true
+    modes:
+      Bố cục đầy đủ: {}
+      Chỉ chữ:
+        prompt_mode: prompt_ocr
+      Chỉ bố cục (không chữ):
+        prompt_mode: prompt_layout_only_en

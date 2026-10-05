@@ -198,7 +198,7 @@ def cmd_serve(a):
     from .app import serve
 
     serve(a.config, a.model, host=a.host, port=a.port, share=a.share, dpi=a.dpi,
-          params=_params(a.set), gpus=a.gpus)
+          params=_params(a.set), gpus=a.gpus, text_layer=not a.ocr_all, title=a.title)
 
 
 def _params(sets):
@@ -334,6 +334,8 @@ def main(argv=None):
     p.add_argument("--dpi", type=int, default=200)
     p.add_argument("--set", action="append", help="ghi đè tham số model, vd. --set batch_size=4 --set stop_on_loop=true")
     p.add_argument("--gpus", default="auto", help="auto = mọi GPU (một bản model mỗi GPU); vd. 0 hoặc 0,1")
+    p.add_argument("--ocr-all", action="store_true", help="mặc định bỏ chọn 'Dùng lớp chữ PDF' (mọi trang qua model)")
+    p.add_argument("--title", help="tiêu đề trang web")
     p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("speedtest", help="đo tốc độ + độ chính xác của các cấu hình tối ưu (chọn cấu hình triển khai)")
