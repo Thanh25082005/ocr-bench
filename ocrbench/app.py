@@ -288,7 +288,13 @@ def build_app(converter: Converter, text_layer: bool = True, title: str | None =
 
 def serve(config: str, model: str, host: str = "127.0.0.1", port: int = 7860, share: bool = False, dpi: int = 200,
           params: dict | None = None, gpus: str | None = "auto", text_layer: bool = True, title: str | None = None,
-          history_dir: str | None = None):
+          history_dir: str | None = None, auth: str | None = None):
+    """auth: "tên:mật_khẩu" (nhiều người: "a:1,b:2") — BẮT BUỘC khi mở web ra ngoài (ngrok, --share)."""
+    users = None
+    if auth:
+        users = [tuple(x.split(":", 1)) for x in auth.split(",") if ":" in x]
+        if not users or any(not u or not pw for u, pw in users):
+            raise ValueError("auth phải có dạng ten:matkhau (nhiều người: a:1,b:2)")
     print(f"Đang nạp model '{model}'...", flush=True)
     converter = Converter(config, model, dpi=dpi, params=params, gpus=gpus)
     where = f"{len(converter.adapters)} GPU" if converter.devices else "thiết bị mặc định"
@@ -297,5 +303,8 @@ def serve(config: str, model: str, host: str = "127.0.0.1", port: int = 7860, sh
 
     demo = build_app(converter, text_layer=text_layer, title=title, history_dir=history_dir)
     print(f"Lịch sử lưu ở: {demo.history_dir}", flush=True)
+    print("Đăng nhập: BẬT (" + ", ".join(u for u, _ in users) + ")" if users else
+          "Đăng nhập: TẮT — chỉ dùng khi web chỉ mở qua SSH tunnel", flush=True)
     demo.launch(server_name=host, server_port=port, share=share, css=CSS, theme=gr.themes.Soft(),
-                allowed_paths=[str(Path(demo.history_dir).resolve())])
+                allowed_paths=[str(Path(demo.history_dir).resolve())], auth=users,
+                auth_message="Demo OCR — đăng nhập bằng tài khoản được cấp")

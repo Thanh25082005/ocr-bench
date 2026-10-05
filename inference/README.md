@@ -51,6 +51,20 @@ phiên là mất, cần giữ thì tải về trước.
 
 Tốc độ ước tính trên T4: ~30–90 giây/trang tùy độ dày chữ (2 GPU = 2 trang song song).
 
+## Cho người khác xem qua ngrok
+
+```bash
+tmux kill-session -t demo 2>/dev/null
+tmux new -d -s demo "cd /kaggle/working/ocr-bench && SKIP_CHECK=1 AUTH=demo:MATKHAU bash inference/start.sh 2>&1 | tee /kaggle/working/demo.log"
+python inference/ngrok_web.py          # in ra LINK WEB https://....ngrok-free.app
+python inference/ngrok_web.py --stop   # đóng link (tunnel SSH vẫn giữ)
+```
+
+- **Bắt buộc có mật khẩu** (`AUTH=ten:matkhau`, nhiều người `a:1,b:2`): script từ chối mở link nếu web không có đăng nhập.
+- Thêm tunnel HTTP vào tiến trình ngrok đang chạy SSH (tài khoản miễn phí chỉ 1 tiến trình) — không làm rớt SSH.
+- Người xem lần đầu gặp trang cảnh báo của ngrok → bấm *Visit Site*, rồi đăng nhập.
+- Mọi người đăng nhập đều thấy chung tab Lịch sử → chỉ demo bằng tài liệu mẫu (`samples/`), không dùng tài liệu thật.
+
 ## Lưu ý
 
 - GPU dùng chung với benchmark: dừng agent / lệnh `ocrbench run` trước, hoặc chạy demo với `GPUS=1`.

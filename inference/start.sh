@@ -5,6 +5,7 @@
 #   SHARE=1 bash inference/start.sh    # thêm link công khai *.gradio.live (KHÔNG dùng với tài liệu thật/mật)
 #   GPUS=1 bash inference/start.sh     # chỉ dùng GPU 1 (khi GPU 0 đang chạy benchmark)
 #   SKIP_CHECK=1 bash inference/start.sh
+#   AUTH=demo:matkhau bash inference/start.sh   # BẮT BUỘC khi cho người khác vào qua ngrok (nhiều người: a:1,b:2)
 #   NO_VENV=1 bash inference/start.sh  # dùng python hệ thống (transformers 5.x: dots trả chữ rỗng — chỉ để thử)
 #
 # Vì sao venv: code của dots (trust_remote_code) viết cho transformers 4.56.1 (requirements.txt của họ ghim đúng
@@ -43,4 +44,5 @@ echo "   Máy mình: ssh -L ${PORT}:localhost:${PORT} kaggle-ngrok   rồi vào 
 ARGS=(--config inference/config.yaml --model dots_mocr --port "$PORT" --gpus "$GPUS" --ocr-all
       --title "dots.mocr — đọc bố cục tài liệu (demo)")
 if [ -n "${SHARE:-}" ]; then ARGS+=(--share); fi
+if [ -n "${AUTH:-}" ]; then ARGS+=(--auth "$AUTH"); fi
 exec "$PY" -m ocrbench.cli serve "${ARGS[@]}"
