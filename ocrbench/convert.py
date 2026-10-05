@@ -23,6 +23,8 @@ from .adapters import create_adapter
 from .config import load_config
 from .dataset import Item
 from .docx_export import _ARABIC, add_page, new_document
+from .preprocess import config_of as preprocess_config
+from .preprocess import preprocess
 
 PDF_EXTS = {".pdf"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
@@ -77,6 +79,7 @@ class Converter:
         self.params = merge_params(self.spec.params, params or {})
         self.batch = max(1, int(self.params.get("batch_size", 1)))
         self.max_side = self.params.get("max_image_side")
+        self.pre_cfg = preprocess_config(self.params.get("preprocess"))  # giống hệt lúc chạy benchmark
         devices = self._devices(gpus)
         if len(devices) > 1:
             self.adapters = [create_adapter(self.spec.adapter, {**self.params, "device_map": {"": f"cuda:{d}"}})
@@ -141,6 +144,8 @@ class Converter:
     def _prepare(self, image: Image.Image, path: Path, n: int, doc_type: str):
         if self.max_side and max(image.size) > self.max_side:
             image.thumbnail((self.max_side, self.max_side), Image.LANCZOS)
+        if self.pre_cfg:
+            image, _ = preprocess(image, self.pre_cfg)
         gt_type = DOC_TYPES.get(doc_type, "text")
         return image, Item(id=f"{path.name}#p{n}", image=path, category=f"app_{doc_type}", gt="", gt_type=gt_type)
 

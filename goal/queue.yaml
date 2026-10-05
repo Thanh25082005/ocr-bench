@@ -15,6 +15,7 @@ queue:
   - tesseract            # OCR truyền thống, CPU — mốc so sánh rẻ nhất (đã xong)
   - easyocr              # (đang chạy khi đổi thứ tự — giữ nguyên vị trí)
   - sherif_handwriting   # ƯU TIÊN: Qwen2.5-VL-3B, chữ viết tay Ả Rập–Anh
+  - sherif_handwriting_pre  # = sherif + tiền xử lý ảnh (ocrbench/preprocess.py); chỉ ~24% mẫu phải chạy lại
   - qari_0_4             # ƯU TIÊN: Qwen3-VL-4B + LoRA tiếng Ả Rập
   - amad_vlm6            # ƯU TIÊN: 8,3 tỉ tham số — không vừa 1 T4 ở fp16
   - paddleocr_ar

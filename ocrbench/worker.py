@@ -27,9 +27,34 @@ from PIL import Image, ImageOps
 from .adapters import create_adapter
 from .config import ModelSpec, load_config
 from .dataset import fingerprint, load_manifest
+from .preprocess import config_of as preprocess_config
+from .preprocess import preprocess
 
 MAX_CONSECUTIVE_ERRORS = 10
 EXIT_SPEC_CHANGED = 3
+EXIT_REUSE_MISMATCH = 4
+PREPROCESS_KEYS = ("preprocess", "preprocess_reuse")
+
+
+def reuse_source(cfg, spec: ModelSpec, split: str) -> tuple[str | None, dict]:
+    """`params.preprocess_reuse: <model gốc>`: mẫu nào tiền xử lý KHÔNG đổi ảnh thì lấy luôn kết quả của model gốc
+    (cùng adapter, cùng tham số ngoài phần tiền xử lý) thay vì chạy lại — kết quả sẽ y hệt, chỉ tốn GPU.
+    Trả về (lỗi hoặc None, {id: bản ghi không lỗi của model gốc})."""
+    name = spec.params.get("preprocess_reuse")
+    if not name:
+        return None, {}
+    try:
+        base = cfg.model(name)
+    except KeyError as e:
+        return str(e), {}
+    strip = lambda d: {k: v for k, v in d.items() if k not in PREPROCESS_KEYS}  # noqa: E731
+    if base.adapter != spec.adapter or strip(base.params) != strip(spec.params) or base.env != spec.env:
+        return (f"preprocess_reuse: '{name}' khác adapter/params/env với '{spec.name}' (ngoài phần tiền xử lý) "
+                f"→ không được dùng lại kết quả. Chép NGUYÊN mục '{name}' rồi chỉ thêm preprocess, preprocess_reuse."), {}
+    if base.params.get("preprocess"):
+        return f"preprocess_reuse: model gốc '{name}' phải là bản KHÔNG tiền xử lý", {}
+    preds = load_predictions(run_dir(cfg.output_dir, split, name) / "predictions.jsonl")
+    return None, {k: v for k, v in preds.items() if not v.get("error")}
 
 
 def spec_fingerprint(adapter: str, params: dict, env: dict | None = None) -> str:
@@ -180,6 +205,35 @@ def run_model(
     if not todo:
         return 0
 
+    pre_cfg = preprocess_config(spec.params.get("preprocess"))
+    reused: list[dict] = []
+    if pre_cfg and spec.params.get("preprocess_reuse"):
+        err, base_preds = reuse_source(cfg, spec, split)
+        if err:
+            print(f"[{tag}] TỪ CHỐI CHẠY: {err}", flush=True)
+            return EXIT_REUSE_MISMATCH
+        keep = []
+        for it in todo:
+            infos = [preprocess(load_image(p, spec.params.get("max_image_side")), pre_cfg)[1] for p in it.images]
+            if not any(infos) and it.id in base_preds:
+                b = base_preds[it.id]
+                reused.append({"id": it.id, "text": b["text"], "confidence": b.get("confidence"),
+                               "latency_s": b.get("latency_s"), "error": None,
+                               "extra": {**(b.get("extra") or {}), "preprocess": infos,
+                                         "reused_from": spec.params["preprocess_reuse"]}})
+            else:
+                keep.append(it)
+        if reused:
+            with pred_path.open("a", encoding="utf-8") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                for rec in reused:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                f.flush()
+                fcntl.flock(f, fcntl.LOCK_UN)
+        todo = keep
+        print(f"[{tag}] tiền xử lý không đổi ảnh của {len(reused)} mẫu → dùng lại kết quả của "
+              f"'{spec.params['preprocess_reuse']}'; còn {len(todo)} mẫu phải chạy model", flush=True)
+
     for k, v in spec.env.items():
         os.environ[k] = v
     data_fp = fingerprint(load_manifest(cfg.dataset))
@@ -195,6 +249,19 @@ def run_model(
         "gpus": _gpu_names(),
         "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
     }
+
+    if pre_cfg:
+        session["reused"] = len(reused)
+    if not todo:  # mọi mẫu còn lại đều dùng lại được kết quả gốc: không cần nạp model
+        session["finished"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        def add_reused(meta):
+            meta["spec_hash"] = spec_hash
+            meta["dataset_fingerprint"] = data_fp
+            meta.setdefault("sessions", []).append(session)
+
+        _update_meta(meta_path, add_reused)
+        return 0
 
     adapter = create_adapter(spec.adapter, spec.params)
     max_side = spec.params.get("max_image_side")
@@ -212,13 +279,16 @@ def run_model(
                 rec = {"id": it.id, "text": "", "confidence": None, "latency_s": None, "extra": {}, "error": None}
                 try:
                     pages = [load_image(p, max_side) for p in it.images]
+                    pre_infos = None
+                    if pre_cfg:
+                        pages, pre_infos = map(list, zip(*(preprocess(p, pre_cfg) for p in pages)))
                     t = time.perf_counter()
                     pred = adapter.predict(pages[0], it) if len(pages) == 1 else adapter.predict_pages(pages, it)
                     rec.update(
                         text=pred.text,
                         confidence=pred.confidence,
                         latency_s=round(time.perf_counter() - t, 3),
-                        extra=pred.extra,
+                        extra=pred.extra if pre_infos is None else {**pred.extra, "preprocess": pre_infos},
                     )
                     consecutive_errors = 0
                 except Exception as e:  # một trang lỗi không được làm dừng cả lượt chạy

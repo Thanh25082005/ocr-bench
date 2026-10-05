@@ -19,7 +19,7 @@
 
 ## 2. Nhiệm vụ của bạn
 
-Chạy lần lượt **10 model** trong `goal/queue.yaml` trên split `dev`. Mỗi model: chạy → chấm → ghi `BENCHMARK.md` → đẩy
+Chạy lần lượt **11 mục** (10 model + 1 thí nghiệm tiền xử lý ảnh) trong `goal/queue.yaml` trên split `dev`. Mỗi model: chạy → chấm → ghi `BENCHMARK.md` → đẩy
 lên GitHub → xóa trọng số khỏi ổ đĩa → sang model sau. **Xong** khi và chỉ khi lệnh
 
 ```bash
@@ -48,7 +48,7 @@ Lệnh `ocrbench` dùng nhiều nhất:
 
 | Lệnh | Làm gì |
 |---|---|
-| `ocrbench goal-check --config C` | Trạng thái 10 model + **VIỆC TIẾP THEO** + `GOAL: ĐẠT/CHƯA ĐẠT` |
+| `ocrbench goal-check --config C` | Trạng thái 11 mục + **VIỆC TIẾP THEO** + `GOAL: ĐẠT/CHƯA ĐẠT` |
 | `ocrbench restore --config C` | Kéo kết quả + nhật ký + config từ GitHub về (đầu mỗi phiên) |
 | `ocrbench vram --config C --models M [--long]` | VRAM cần, VRAM trống, cấu hình nên dùng |
 | `ocrbench run --config C --models M --categories ... [--per-category N] --gpus 0,1` | Chạy model (trong tmux) |
@@ -69,6 +69,7 @@ Hành vi tự động của tool (bạn không cần làm tay):
 | 1 | tesseract | ✔ xong | CER văn bản 30%, không đọc được chữ viết tay |
 | 2 | easyocr | ✔ xong | CER văn bản 33% |
 | 3 | sherif_handwriting | nhóm thường ✔ 923/923 · tài liệu dài: chạy lại đọc từng trang | Đứng đầu (CER văn bản 15,7%; chữ viết tay 7–11%). Đọc cả tài liệu một lượt: 5/24 hết VRAM, 3/24 bị cắt ở 8192 token |
+| 3b | sherif_handwriting_pre | chưa chạy | = sherif + **tiền xử lý ảnh**; chỉ ~224/947 mẫu phải chạy model, còn lại chép kết quả sherif |
 | 4 | qari_0_4 | chưa chạy | Qwen3-VL-4B + LoRA |
 | 5 | amad_vlm6 | chưa chạy | 8,3 tỉ tham số, cần 2 GPU |
 | 6–10 | paddleocr_ar, paddleocr_vl, baseer, hunyuan_ocr, surya | chưa chạy | |
@@ -131,6 +132,7 @@ dòng của `M` trong bảng tổng hợp) → `ocrbench status --config C --pus
 | Model | Ghi chú |
 |---|---|
 | **sherif_handwriting** (đang dở) | Nhóm thường đã xong. Biến thể `sherif_handwriting__sl__long` (đọc cả tài liệu một lượt) đã chạy 24/24 nhưng **5 mẫu hết VRAM** ở bước prefill → đặt `enabled: false` cho nó và cho `sherif_handwriting__long`, KHÔNG xóa kết quả. Tạo `sherif_handwriting__pp__long` theo bước D (chép mục `sherif_handwriting`, giữ `gpus: 1` → tool tự chia 2 GPU). Ước ~1 giờ. Rồi E, F. |
+| **sherif_handwriting_pre** (ngay sau sherif) | Thí nghiệm **tiền xử lý ảnh** (`ocrbench/preprocess.py`: làm phẳng nền, tăng tương phản, chỉnh nghiêng, phóng ảnh nhỏ — chỉ chạy khi ảnh có lỗi đó). Tạo 2 mục trong config: (1) `sherif_handwriting_pre` = chép **NGUYÊN** mục `sherif_handwriting` trong config đang chạy (mọi params, kể cả `model_kwargs`), chỉ thêm `preprocess: true` và `preprocess_reuse: sherif_handwriting`, `enabled: true`; (2) `sherif_handwriting_pre__pp__long` = chép NGUYÊN mục tài liệu dài mà sherif đã dùng xong (`sherif_handwriting__pp__long` hoặc `__pp2g__long`), thêm `preprocess: true` và `preprocess_reuse: <tên mục đó>`. Tool tự lấy kết quả sherif cho mẫu ảnh không đổi (log: "dùng lại kết quả ... còn N mẫu phải chạy model"); khác params → tool từ chối (mã 4): sửa cho giống hệt rồi chạy lại. Trọng số sherif đã bị clean-cache xóa ở bước F → tải lại (~7 GB), bình thường. Đi đủ A→G như model thường (bước D: lệnh run với biến thể `sherif_handwriting_pre__pp__long`, `--per-category 12`; tài liệu dài ảnh sạch nên thường xong ngay không cần nạp model). CẤM sửa ngưỡng tiền xử lý, CẤM tự tạo biến thể tiền xử lý cho model khác. |
 | **qari_0_4** | `hf_vlm`, Qwen3-VL-4B + LoRA (`adapter_id`). Lỗi nạp model nhắc `qwen3_vl` / model type không hỗ trợ → được chạy ĐÚNG MỘT lệnh `python -m pip install -q -U "transformers>=4.57"` rồi thử lại (cấm đụng torch/CUDA). Model này hay lặp vòng: đo nguyên cấu hình gốc, KHÔNG tự thêm repetition_penalty. Ước 4–5 giờ. |
 | **amad_vlm6** | 8,3 tỉ tham số, không vừa 1 T4: dùng mục `amad_vlm6__2gpu` mà vram in ra (bậc B). Hết bộ nhớ ở bậc B → DỪNG và hỏi (bậc C trở đi giảm độ chính xác). Không chia mẫu cho 2 GPU được (1 bản model chiếm cả 2 card) → chậm, ước 6–10 giờ. Mục `amad_vlm6_4bit` trong config KHÔNG thuộc hàng đợi — để nguyên `enabled` như cũ, không chạy. |
 | **paddleocr_ar** | Cần cài trước: `python -m pip install -q "paddleocr>=3.3"`. Config dùng `engine: transformers` (không cần paddlepaddle-gpu). Xung đột thư viện → venv riêng theo README mục 4. |
@@ -150,6 +152,7 @@ model, ghi vào `/kaggle/working/goal_skips.yaml` theo mẫu docs/GOAL_PROMPT.md
 - sửa dữ liệu test, `goal/queue.yaml`, `goal/GOAL_LOCK.sha256`, code tool (`ocrbench/`, `tests/`, `docs/`, `scripts/`),
   mục `normalization` trong config, `BENCHMARK.md`; chạy `goal-check --write-lock`;
 - đổi tham số của model đã có kết quả mà giữ tên cũ; xóa thư mục kết quả; xóa trọng số bằng `rm`;
+- tự bật `preprocess` cho model nào ngoài `sherif_handwriting_pre`, hoặc đổi ngưỡng tiền xử lý;
 - giảm `max_new_tokens`, đổi `dtype: float32`, thêm `max_pixels`/`max_image_side`, nén model (bậc C–H) khi chưa hỏi;
 - cài/nâng/hạ `torch`, CUDA, driver; gửi ảnh/chữ của bộ test ra ngoài (API bên thứ ba);
 - tự tính / làm tròn số liệu — mọi con số chép nguyên văn từ output của tool;

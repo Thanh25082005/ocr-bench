@@ -95,6 +95,18 @@ models:
       prompt: "ارجو استخراج النص العربي كاملاً من هذه الصورة من البداية الى النهاية بدون اي اختصار ودون ذيادة او حذف. اقرأ كل المحتوى النصي الموجود في الصورة:"
       max_new_tokens: 1024
 
+  # sherif_handwriting + TIỀN XỬ LÝ ẢNH (làm phẳng nền, tăng tương phản, chỉnh nghiêng, phóng ảnh nhỏ).
+  # params PHẢI giống hệt mục sherif_handwriting trong config đang chạy (chép nguyên, kể cả model_kwargs nếu có),
+  # chỉ thêm 2 dòng cuối: mẫu nào tiền xử lý không đổi ảnh thì lấy luôn kết quả của sherif_handwriting.
+  - name: sherif_handwriting_pre
+    adapter: hf_vlm
+    params:
+      model_id: sherif1313/Arabic-English-handwritten-OCR-v3
+      prompt: "ارجو استخراج النص العربي كاملاً من هذه الصورة من البداية الى النهاية بدون اي اختصار ودون ذيادة او حذف. اقرأ كل المحتوى النصي الموجود في الصورة:"
+      max_new_tokens: 1024
+      preprocess: true
+      preprocess_reuse: sherif_handwriting
+
   # amad-vlm6: 8,3 tỉ tham số, ~16,6 GB ở fp16 -> không vừa 1 card T4.
   # Cách 1: chia trên 2 GPU (giữ nguyên chất lượng, chiếm cả 2 card).
   - name: amad_vlm6
