@@ -259,7 +259,7 @@ def test_lists_inside_table_cells_keep_numbering(tmp_path):
     pytest.importorskip("markdown_it")
     from ocrbench.viewer import ocr_html
 
-    assert '<ol type="a">' in ocr_html(html)
+    assert '<ol type="a" class="lt-a">' in ocr_html(html)  # class + CSS !important: Gradio ghi đè type bằng ol {list-style: decimal}
 
 
 def test_list_markers():

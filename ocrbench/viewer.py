@@ -15,6 +15,8 @@ ALLOWED_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "br", "hr", "ul", "ol",
                 "tfoot", "tr", "td", "th", "caption"}
 ALLOWED_ATTRS = {"colspan", "rowspan", "dir", "align", "type", "start"}  # type/start: <ol type="a"> = a, b, c
 VOID = {"br", "hr"}
+# <ol type="a"> bị CSS của Gradio (ol {list-style: decimal}) ghi đè → thêm class + CSS !important cho đúng kiểu đánh số
+LIST_CLASS = {"1": "lt-1", "a": "lt-a", "A": "lt-ua", "i": "lt-i", "I": "lt-ui"}
 DROP_CONTENT = {"script", "style", "iframe", "object", "embed", "svg", "math", "img", "video", "audio", "form"}
 
 
@@ -33,6 +35,11 @@ class _Sanitizer(HTMLParser):
             return
         keep = "".join(f' {k}="{html.escape(v or "", quote=True)}"' for k, v in attrs
                        if k in ALLOWED_ATTRS and (v or "").replace(" ", "").isalnum())
+        if tag == "ol":
+            kind = dict(attrs).get("type") or "1"
+            keep += f' class="{LIST_CLASS.get(kind, "lt-1")}"'
+        elif tag == "ul":
+            keep += ' class="lt-ul"'
         self.out.append(f"<{tag}{keep}>")
 
     def handle_startendtag(self, tag, attrs):
@@ -75,5 +82,12 @@ CSS = """
 .ocr-page table {border-collapse: collapse; margin: 8px 0; width: 100%;}
 .ocr-page td, .ocr-page th {border: 1px solid #9ca3af; padding: 3px 6px; vertical-align: top;}
 .ocr-page th, .ocr-page thead td {font-weight: 600; background: rgba(127,127,127,.12);}
+.ocr-page ol, .ocr-page ul {padding-inline-start: 1.6em; margin: 2px 0;}
+.ocr-page ol.lt-1 {list-style-type: decimal !important;}
+.ocr-page ol.lt-a {list-style-type: lower-alpha !important;}
+.ocr-page ol.lt-ua {list-style-type: upper-alpha !important;}
+.ocr-page ol.lt-i {list-style-type: lower-roman !important;}
+.ocr-page ol.lt-ui {list-style-type: upper-roman !important;}
+.ocr-page ul.lt-ul {list-style-type: disc !important;}
 .ocr-page h1 {font-size: 1.4em;} .ocr-page h2 {font-size: 1.2em;} .ocr-page h3 {font-size: 1.05em;}
 """
