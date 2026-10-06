@@ -5,3 +5,5 @@ __pycache__/
 .pytest_cache/
 /testset/
 *.zip
+scripts/ooxml_validate/bin/
+scripts/ooxml_validate/obj/
