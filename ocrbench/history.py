@@ -43,6 +43,7 @@ def file_entry(job_dir: Path, name: str, source: Path | None, result) -> dict:
         "name": name,
         "source": rel(source, job_dir),
         "docx": rel(result.docx, job_dir),
+        "docx_exact": rel(getattr(result, "docx_exact", None), job_dir),
         "pages": [{
             "index": p.index, "source": p.source, "seconds": round(p.seconds, 1), "error": p.error, "note": p.note,
             "text": p.text, "image": rel(p.page_image, job_dir), "layout_image": rel(p.layout_image, job_dir),

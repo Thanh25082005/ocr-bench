@@ -42,6 +42,7 @@ class PageResult:
     blocks: list | None = None  # chế độ bố cục: [{category, bbox}] theo thứ tự đọc
     layout_image: Path | None = None  # ảnh trang có khung từng khối (để đối chiếu)
     page_image: Path | None = None  # ảnh trang gốc (save_pages=True) — để xem song song bản gốc / bản OCR
+    image: object = field(default=None, repr=False)  # ảnh model đã đọc (toạ độ khối theo ảnh này); dùng tạm khi dựng DOCX
 
 
 @dataclass
@@ -49,6 +50,7 @@ class FileResult:
     path: Path
     pages: list[PageResult] = field(default_factory=list)
     docx: Path | None = None
+    docx_exact: Path | None = None  # DOCX giữ nguyên bố cục (mỗi khối đúng toạ độ) — chỉ khi model trả khối có chữ
 
 
 def parse_pages(spec: str | None, n_pages: int) -> list[int]:
@@ -86,6 +88,8 @@ class Converter:
         # chế độ đọc (kiểu dots.ocr): params.modes = {tên: {prompt, output_format, ...}}; mục đầu là mặc định
         self.modes = dict(self.params.get("modes") or {})
         devices = self._devices(gpus)
+        if self.spec.adapter == "dots":  # cần chữ từng khối để dựng DOCX giữ nguyên bố cục
+            self.params = merge_params(self.params, {"blocks_with_text": True})
         if len(devices) > 1:
             self.adapters = [create_adapter(self.spec.adapter, {**self.params, "device_map": {"": f"cuda:{d}"}})
                              for d in devices]
@@ -165,7 +169,7 @@ class Converter:
 
     def convert_file(self, path: str | Path, out_dir: str | Path, force_ocr: bool = False, pages: str | None = None,
                      doc_type: str = "text", progress=None, mode: str | None = None,
-                     save_pages: bool = False) -> FileResult:
+                     save_pages: bool = False, exact: bool = True) -> FileResult:
         path, out_dir = Path(path), Path(out_dir)
         if self.modes or mode:
             self.set_mode(mode)
@@ -173,7 +177,7 @@ class Converter:
         result = FileResult(path)
         page_list, close = self._open(path, pages)
         try:
-            self._convert_pages(path, page_list, result, force_ocr, doc_type, progress, out_dir, save_pages)
+            self._convert_pages(path, page_list, result, force_ocr, doc_type, progress, out_dir, save_pages, exact)
         finally:
             close()
         doc = new_document(title=path.stem)
@@ -184,6 +188,15 @@ class Converter:
             add_page(doc, pr.text, header=header, first=(i == 0))
         result.docx = out_dir / f"{path.stem}.docx"
         doc.save(result.docx)
+        if exact and any(pr.blocks and any("text" in b for b in pr.blocks) for pr in result.pages):
+            from .docx_exact import build_exact_docx
+
+            pages = [(pr.image, [b for b in (pr.blocks or []) if "text" in b]) for pr in result.pages
+                     if pr.image is not None]
+            result.docx_exact = out_dir / f"{path.stem}_bo_cuc.docx"
+            build_exact_docx(pages, result.docx_exact, title=path.stem)
+        for pr in result.pages:
+            pr.image = None  # không giữ ảnh trong bộ nhớ sau khi dựng xong
         return result
 
     def _save_page(self, image, out_dir, path, n) -> Path:
@@ -196,7 +209,8 @@ class Converter:
         im.save(p, quality=88)
         return p
 
-    def _convert_pages(self, path, page_list, result, force_ocr, doc_type, progress, out_dir=None, save_pages=False):
+    def _convert_pages(self, path, page_list, result, force_ocr, doc_type, progress, out_dir=None, save_pages=False,
+                       keep_images=False):
         """Trang có lớp chữ dùng được → lấy luôn; trang còn lại gom thành batch, chia cho các GPU chạy song song."""
         slots: list[PageResult | None] = [None] * len(page_list)
         todo = []  # (vị trí, số trang, hàm dựng ảnh)
@@ -204,9 +218,13 @@ class Converter:
             layer = unicodedata.normalize("NFKC", text_layer).strip()  # gộp dạng trình bày của chữ Ả Rập
             if not force_ocr and len(layer) >= self.min_text_chars and not _ARABIC.search(layer):
                 slots[k] = PageResult(n, "lớp chữ PDF", layer, 0.0)
-                if save_pages and out_dir is not None:
+                if (save_pages and out_dir is not None) or keep_images:
                     try:
-                        slots[k].page_image = self._save_page(render(), out_dir, path, n)
+                        im = render()
+                        if save_pages and out_dir is not None:
+                            slots[k].page_image = self._save_page(im, out_dir, path, n)
+                        if keep_images:
+                            slots[k].image = im  # DOCX giữ nguyên bố cục: trang không có khối → đặt cả ảnh trang
                     except Exception:  # ảnh xem trước hỏng không được làm hỏng kết quả chữ
                         pass
             else:
@@ -227,6 +245,8 @@ class Converter:
             batches = [ready[i:i + self.batch] for i in range(0, len(ready), self.batch)]
             images = {k: img for k, n, img, item in ready}
             for k, res in self._run_batches(batches):
+                if k in images:
+                    res.image = images[k]
                 if save_pages and out_dir is not None and k in images:
                     res.page_image = self._save_page(images[k], out_dir, path, res.index)
                 if res.blocks and out_dir is not None:

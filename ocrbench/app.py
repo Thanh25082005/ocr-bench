@@ -65,12 +65,12 @@ def _render(job, fi, page_label, show_layout):
     return img, ocr_html(p.get("text", "")), p.get("text", ""), info
 
 
-def _downloads(job):
+def _downloads(job, keys=("docx",)):
     if not job:
         return []
     out = []
     for f in job.get("files", []):
-        for key in ("docx", "source"):
+        for key in keys:
             p = H.abs_path(job, f.get(key))
             if p:
                 out.append(p)
@@ -96,7 +96,11 @@ def make_viewer(gr, label: str):
                 html_out = gr.HTML()
             with gr.Tab("Văn bản thô (sao chép)"):
                 raw = gr.Textbox(lines=30, max_lines=60, show_label=False, interactive=False)
-    downloads = gr.File(label="Tải về: DOCX + file gốc", file_count="multiple", interactive=False)
+    with gr.Row():
+        dl_edit = gr.File(label="📄 DOCX sửa được (soạn thảo lại)", file_count="multiple", interactive=False)
+        dl_exact = gr.File(label="📐 DOCX giữ nguyên bố cục (xem, in, lưu trữ)", file_count="multiple",
+                           interactive=False)
+        dl_src = gr.File(label="File gốc", file_count="multiple", interactive=False)
 
     view_outputs = [img, html_out, raw, info]
 
@@ -130,9 +134,10 @@ def make_viewer(gr, label: str):
         page = labels[0] if labels else None
         has_layout = bool(job) and any(p.get("layout_image") for f in job["files"] for p in f["pages"])
         return (job, gr.update(choices=names, value=first), gr.update(choices=labels, value=page),
-                gr.update(value=has_layout, visible=has_layout), *_render(job, 0, page, has_layout), _downloads(job))
+                gr.update(value=has_layout, visible=has_layout), *_render(job, 0, page, has_layout),
+                _downloads(job, ("docx",)), _downloads(job, ("docx_exact",)) or None, _downloads(job, ("source",)))
 
-    load_outputs = [job_state, file_dd, page_dd, show_layout, *view_outputs, downloads]
+    load_outputs = [job_state, file_dd, page_dd, show_layout, *view_outputs, dl_edit, dl_exact, dl_src]
     return load, load_outputs
 
 

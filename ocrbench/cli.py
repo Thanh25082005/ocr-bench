@@ -167,6 +167,8 @@ def cmd_convert(a):
                                 progress=lambda k, n, msg: print(f"  {msg} ({k + 1}/{n})", flush=True))
         n_ocr = sum(1 for p in res.pages if p.source == "OCR")
         n_err = sum(1 for p in res.pages if p.error)
+        if res.docx_exact:
+            print(f"✔ {res.docx_exact}  (giữ nguyên bố cục)")
         print(f"✔ {res.docx}  ({len(res.pages)} trang: {n_ocr} qua OCR, {len(res.pages) - n_ocr - n_err} từ lớp chữ"
               + (f", {n_err} LỖI" if n_err else "") + ")")
 

@@ -79,9 +79,10 @@ def export_one(i: int, name: str, job: dict, f: dict, out: Path) -> dict:
     src = H.abs_path(job, f.get("source"))
     if src:
         shutil.copy2(src, d / "input" / name)
-    docx = H.abs_path(job, f.get("docx"))
-    if docx:
-        shutil.copy2(docx, d / "output" / Path(docx).name)
+    for key in ("docx", "docx_exact"):  # DOCX sửa được + DOCX giữ nguyên bố cục (<tên>_bo_cuc.docx)
+        docx = H.abs_path(job, f.get(key))
+        if docx:
+            shutil.copy2(docx, d / "output" / Path(docx).name)
     blocks = []
     for p in f["pages"]:
         n = p["index"]

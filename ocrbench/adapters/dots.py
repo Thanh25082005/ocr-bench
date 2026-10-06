@@ -67,6 +67,8 @@ class DotsAdapter(Adapter):
         "attn_implementation": "sdpa",
         "device_map": "auto",
         "manual_embeds": True,
+        # extra.blocks có cả chữ từng khối (để dựng DOCX giữ nguyên bố cục); benchmark để False cho gọn predictions
+        "blocks_with_text": False,
         # chặn chạy vòng tới max_new_tokens với ảnh nhỏ: tối đa k token sinh ra cho mỗi token ảnh (+512).
         # Mỗi token ảnh = 28×28 px chứa vài ký tự → k=4 không cắt trang thật. None = tắt (như source gốc)
         "adaptive_max_tokens": None,
@@ -193,7 +195,11 @@ class DotsAdapter(Adapter):
         text = r["md_nohf"] if self.params["no_page_hf"] and r["md_nohf"] is not None else r["md"]
         if self.params["strip_images"]:
             text = _DATA_IMG.sub("", text).strip()
-        return Prediction(text, extra=r["extra"])
+        extra = r["extra"]
+        if self.params["blocks_with_text"] and r.get("cells"):
+            extra["blocks"] = [{"category": c.get("category"), "bbox": c.get("bbox"), "text": c.get("text", "")}
+                               for c in r["cells"]]
+        return Prediction(text, extra=extra)
 
     def close(self):
         del self._model

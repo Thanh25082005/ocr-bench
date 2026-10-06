@@ -1,0 +1,118 @@
+"""DOCX giữ nguyên bố cục: mỗi khối một khung neo theo trang, đúng toạ độ; không mất chữ; ảnh cắt từ trang gốc."""
+
+import re
+import zipfile
+
+import pytest
+import yaml
+from PIL import Image, ImageDraw, ImageFont
+
+from ocrbench.docx_exact import build_exact_docx, column_bounds, fit_text, text_bands, wrap
+
+FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+
+
+def _font(size):
+    try:
+        return ImageFont.truetype(FONT, size)
+    except OSError:
+        return ImageFont.load_default(size=size)
+
+
+def _page():
+    img = Image.new("RGB", (1240, 1754), "white")
+    d = ImageDraw.Draw(img)
+    d.text((100, 100), "INVOICE No. 2041", fill="black", font=_font(44))
+    for i, line in enumerate(["Customer: Al Noor Trading LLC", "Date: 05/10/2026, due in 30 days"]):
+        d.text((100, 200 + i * 40), line, fill="black", font=_font(28))
+    d.rectangle((900, 80, 1100, 180), fill="navy")  # "logo"
+    for x, col in ((110, "Item"), (610, "Qty"), (900, "Price")):  # bảng 3 cột, khe trắng rõ
+        d.text((x, 320), col, fill="black", font=_font(26))
+        d.text((x, 380), {"Item": "Laptop", "Qty": "2", "Price": "1,250.00"}[col], fill="black", font=_font(26))
+    blocks = [
+        {"category": "Title", "bbox": [100, 100, 520, 150], "text": "# INVOICE No. 2041"},
+        {"category": "Text", "bbox": [100, 200, 620, 270], "text": "Customer: **Al Noor Trading LLC** Date: 05/10/2026, due in 30 days"},
+        {"category": "Picture", "bbox": [900, 80, 1100, 180], "text": ""},
+        {"category": "Table", "bbox": [100, 310, 1100, 420],
+         "text": "<table><tr><th>Item</th><th>Qty</th><th>Price</th></tr><tr><td>Laptop</td><td>2</td><td>1,250.00</td></tr></table>"},
+    ]
+    return img, blocks
+
+
+def test_build_positions_text_and_images(tmp_path):
+    img, blocks = _page()
+    out = tmp_path / "x.docx"
+    st = build_exact_docx([(img, blocks), (img, [])], out, title="t")
+    fonts = st.pop("fonts")
+    assert st == {"pages": 2, "text": 2, "table": 1, "image": 2, "whole_page_image": 1}
+    names = zipfile.ZipFile(out).namelist()
+    if fonts:  # phông được nhúng (đo = hiển thị trên mọi máy)
+        assert any(n.startswith("word/fonts/") and n.endswith(".odttf") for n in names)
+        assert "embedTrueTypeFonts" in zipfile.ZipFile(out).read("word/settings.xml").decode()
+    xml = zipfile.ZipFile(out).read("word/document.xml").decode()
+    assert xml.count("<wp:anchor") == 5 and xml.count('relativeFrom="page"') == 10  # mọi khung neo theo trang
+    words = " ".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", xml))
+    for w in ["INVOICE", "2041", "Customer:", "Al", "Noor", "Trading", "Laptop", "1,250.00", "Price"]:
+        assert w in words  # không mất chữ
+    assert "<w:b/>" in xml  # **đậm** và tiêu đề giữ in đậm
+    # ô "Qty" (chữ ở x=610 px) phải thụt lề để không bị kéo về mép trái ô
+    assert re.search(r'<w:ind w:left="[1-9]\d*" w:right="0"/>', xml)
+    # toạ độ: x=100 px trên ảnh rộng 1240 px ↔ 210 mm → 100/1240*210 mm = 16.94 mm = 609677 EMU
+    xs = [int(v) for v in re.findall(r'<wp:positionH relativeFrom="page"><wp:posOffset>(\d+)', xml)]
+    assert any(abs(x - 100 / 1240 * 210 * 36000) < 2 for x in xs)
+    from docx import Document
+
+    d = Document(out)
+    assert len(d.sections) == 2 and abs(d.sections[0].page_width.mm - 210) < 0.1
+    assert abs(d.sections[0].page_height.mm - 1754 / 1240 * 210) < 0.1
+    assert len(zipfile.ZipFile(out).namelist()) > 0 and any(n.startswith("word/media/") for n in zipfile.ZipFile(out).namelist())
+
+
+def test_wrap_and_fit_respect_line_count():
+    text = "The quick brown fox jumps over the lazy dog " * 6
+    size, spacing, lines = fit_text(text, 600, 120, 3, 40, False)
+    assert len(lines) <= 3 and all(len(line) > 0 for line in lines)
+    assert wrap("a b c", 10_000, 12) == ["a b c"]
+
+
+def test_text_bands_and_columns():
+    img, blocks = _page()
+    assert len(text_bands(img, blocks[1]["bbox"])) == 2  # khối 2 dòng
+    b = column_bounds(img, blocks[3]["bbox"], 3)
+    # ranh giới nằm trong khe trắng giữa các cột (cột 2 bắt đầu ở x=510, cột 3 ở x=800 trong khối)
+    assert b is not None and len(b) == 4 and 120 < b[1] < 505 and 560 < b[2] < 795
+
+
+def test_converter_builds_both_docx(tmp_path):
+    """Model trả khối có chữ (như dots với blocks_with_text) → converter ghi thêm <tên>_bo_cuc.docx."""
+    (tmp_path / "m.jsonl").write_text("")
+    (tmp_path / "c.yaml").write_text(yaml.safe_dump({"dataset": "m.jsonl", "models": [
+        {"name": "lay", "adapter": "tests.test_docx_exact:FakeBlocks"}]}))
+    from ocrbench.convert import Converter
+
+    img, _ = _page()
+    img.save(tmp_path / "a.png")
+    res = Converter(tmp_path / "c.yaml", "lay").convert_file(tmp_path / "a.png", tmp_path / "o", force_ocr=True)
+    assert res.docx.exists() and res.docx_exact and res.docx_exact.name == "a_bo_cuc.docx" and res.docx_exact.exists()
+    assert all(p.image is None for p in res.pages)  # không giữ ảnh trong bộ nhớ sau khi dựng
+
+
+from ocrbench.adapters.base import Adapter, Prediction  # noqa: E402
+
+
+class FakeBlocks(Adapter):
+    def predict(self, image, item):
+        _, blocks = _page()
+        return Prediction("# INVOICE No. 2041", extra={"layout": "ok", "blocks": blocks})
+
+
+def test_exact_skipped_without_block_text(tmp_path):
+    pytest.importorskip("docx")
+    from ocrbench.convert import Converter
+
+    (tmp_path / "m.jsonl").write_text("")
+    (tmp_path / "c.yaml").write_text(yaml.safe_dump({"dataset": "m.jsonl", "models": [
+        {"name": "fake", "adapter": "tests.test_app:FakeOCR"}]}))
+    Image.new("RGB", (300, 300), "white").save(tmp_path / "a.png")
+    res = Converter(tmp_path / "c.yaml", "fake").convert_file(tmp_path / "a.png", tmp_path / "o")
+    assert res.docx.exists() and res.docx_exact is None
