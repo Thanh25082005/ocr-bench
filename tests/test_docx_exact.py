@@ -278,3 +278,14 @@ def test_residual_layer_keeps_rules_drops_cut_glyph_parts():
     assert alpha[200:202, 150:250].any()  # đoạn kẻ dưới khung khối vẫn còn
     assert alpha[200:202, 20:90].any() and alpha[200:202, 400:570].any()
     assert not alpha[105:125, 300:310].any()  # đuôi chữ bị cắt không thành vệt thừa
+
+
+def test_embed_fonts_setting_in_schema_order():
+    """<w:embedTrueTypeFonts/> phải đứng SAU w:zoom (CT_Settings) — đứng trước thì Word báo file hỏng."""
+    from ocrbench.docx_exact import _settings_embed
+
+    W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+    xml = f'<w:settings {W}><w:zoom w:percent="100"/><w:defaultTabStop w:val="720"/></w:settings>'.encode()
+    out = _settings_embed(xml).decode()
+    assert out.index("zoom") < out.index("embedTrueTypeFonts") < out.index("defaultTabStop")
+    assert _settings_embed(out.encode()).decode().count("embedTrueTypeFonts") == 1

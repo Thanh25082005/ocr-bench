@@ -876,6 +876,30 @@ def _obfuscate(data: bytes, guid: str) -> bytes:
     return head + data[32:]
 
 
+# CT_Settings: các phần tử ĐỨNG TRƯỚC embedTrueTypeFonts (ECMA-376 §17.15.1.78). Sai thứ tự → Word báo file hỏng
+# (LibreOffice thì bỏ qua) — đã kiểm bằng Open XML SDK (OpenXmlValidator, Office 2010 / 2019).
+_SETTINGS_BEFORE_EMBED = ("writeProtection", "view", "zoom", "removePersonalInformation", "removeDateAndTime",
+                          "doNotDisplayPageBoundaries", "displayBackgroundShape", "printPostScriptOverText",
+                          "printFractionalCharacterWidth", "printFormsData")
+
+
+def _settings_embed(xml: bytes) -> bytes:
+    """Thêm <w:embedTrueTypeFonts/> vào settings.xml ĐÚNG VỊ TRÍ theo lược đồ."""
+    from lxml import etree
+
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    root = etree.fromstring(xml)
+    if root.find(f"{{{W}}}embedTrueTypeFonts") is not None:
+        return xml
+    el = etree.Element(f"{{{W}}}embedTrueTypeFonts")
+    pos = 0
+    for i, child in enumerate(root):
+        if isinstance(child.tag, str) and etree.QName(child).localname in _SETTINGS_BEFORE_EMBED:
+            pos = i + 1
+    root.insert(pos, el)
+    return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 def embed_fonts(docx_path, fonts: dict | None = None) -> list[str]:
     """Nhúng phông TrueType vào DOCX (Word, LibreOffice đọc được) → hiển thị đúng thông số đã dùng để đo/ngắt dòng."""
     import uuid
@@ -913,10 +937,7 @@ def embed_fonts(docx_path, fonts: dict | None = None) -> list[str]:
         ct = ct.replace("<Default ", '<Default Extension="odttf" ContentType="application/vnd.openxmlformats-'
                         'officedocument.obfuscatedFont"/><Default ', 1)
     parts["[Content_Types].xml"] = ct.encode("utf-8")
-    st = parts["word/settings.xml"].decode("utf-8")
-    if "embedTrueTypeFonts" not in st:
-        st = re.sub(r"(<w:settings[^>]*>)", r"\1<w:embedTrueTypeFonts/>", st, count=1)
-    parts["word/settings.xml"] = st.encode("utf-8")
+    parts["word/settings.xml"] = _settings_embed(parts["word/settings.xml"])
     tmp = src.with_suffix(".tmp.docx")
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
         for n, data in parts.items():
