@@ -91,8 +91,18 @@ def _raqm() -> bool:
     return bool(features.check("raqm"))
 
 
+_STRONG = re.compile(r"[A-Za-z\u00C0-\u024F\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]")
+
+
+def para_rtl(text: str) -> bool:
+    """Hướng đoạn theo UAX #9 (quy tắc P2): chữ CÓ HƯỚNG đầu tiên là Ả Rập / Do Thái → phải → trái.
+    ("الهاتف: +971 56 512 3883 contact@firm.co.uk" nhiều chữ Latin hơn nhưng vẫn là đoạn phải → trái.)"""
+    m = _STRONG.search(text or "")
+    return bool(m) and m.group(0) >= "\u0590"
+
+
 def _font_for(text: str, bold: bool):
-    arabic = bool(_ARABIC.search(text or "")) and is_rtl(text or "")
+    arabic = para_rtl(text or "")
     return _font(bold, 100, arabic, ar_family() if arabic else None)
 
 
@@ -132,10 +142,77 @@ def ink_mask(g: np.ndarray) -> np.ndarray:
     return g < min(200.0, (bg + dark) / 2)
 
 
+def _bg_rows(a: np.ndarray) -> np.ndarray:
+    """Màu nền từng hàng điểm ảnh (H×3): nền chung của vùng (màu phổ biến nhất); hàng nào phần lớn KHÔNG phải nền
+    chung (dải màu: hàng tiêu đề nền đỏ…) thì lấy màu trung vị của chính hàng đó."""
+    q = (a // 16).reshape(-1, 3).astype(np.int32)
+    keys = q[:, 0] * 256 + q[:, 1] * 16 + q[:, 2]
+    mode = np.bincount(keys).argmax()
+    sel = keys == mode
+    bg = np.median(a.reshape(-1, 3)[sel], axis=0) if sel.any() else np.array([255.0, 255.0, 255.0])
+    af = a.astype(np.float32)
+    near = np.linalg.norm(af - bg, axis=2) < 40
+    rows = np.repeat(bg[None, :], a.shape[0], axis=0).astype(np.float32)
+    med = np.median(af, axis=1)  # H×3
+    uniform = (np.linalg.norm(af - med[:, None, :], axis=2) < 40).mean(axis=1) > 0.6
+    cand = (near.mean(axis=1) < 0.35) & uniform
+    # dải nền phải ĐỦ DÀY (≥ 8 px liền): dòng chân chữ Ả Rập (nét nối gần kín bề ngang) không phải dải nền
+    need = min(8, max(2, a.shape[0] // 2))
+    band = np.zeros_like(cand)
+    y = 0
+    while y < len(cand):
+        if cand[y]:
+            e = y
+            while e < len(cand) and cand[e]:
+                e += 1
+            if e - y >= need:
+                band[y:e] = True
+            y = e
+        else:
+            y += 1
+    if band.any():
+        rows[band] = med[band]
+    return rows
+
+
+def ink_rgb(a: np.ndarray) -> np.ndarray:
+    """Mực = điểm ảnh KHÁC MÀU NỀN rõ rệt (không phải "tối hơn ngưỡng"): chữ trắng trên nền đỏ, chữ màu, nét mờ
+    trên giấy xám đều đúng; dải nền màu không bị coi là mực."""
+    if a.size == 0:
+        return np.zeros(a.shape[:2], bool)
+    rows = _bg_rows(a)
+    d = np.linalg.norm(a.astype(np.float32) - rows[:, None, :], axis=2)
+    hi = float(np.percentile(d, 99.5))
+    if hi < 50:  # không có tương phản
+        return np.zeros(a.shape[:2], bool)
+    return d > max(45.0, 0.45 * hi)
+
+
 def _ink(img: Image.Image, box) -> np.ndarray:
     x1, y1, x2, y2 = [int(round(v)) for v in box]
-    g = np.asarray(img.convert("L").crop((x1, y1, max(x2, x1 + 1), max(y2, y1 + 1))), dtype=np.uint8)
-    return ink_mask(g)
+    a = np.asarray(img.convert("RGB").crop((x1, y1, max(x2, x1 + 1), max(y2, y1 + 1))), dtype=np.uint8)
+    return ink_rgb(a)
+
+
+def ink_colors(img: Image.Image, box) -> tuple[str | None, str | None]:
+    """(màu chữ, màu nền) của vùng dạng hex — None khi gần đen / gần trắng (mặc định)."""
+    x1, y1, x2, y2 = [int(round(v)) for v in box]
+    a = np.asarray(img.convert("RGB").crop((x1, y1, max(x2, x1 + 1), max(y2, y1 + 1))), dtype=np.uint8)
+    if a.size == 0:
+        return None, None
+    m = ink_rgb(a)
+    rows = _bg_rows(a)
+    bg = np.median(rows, axis=0)
+    fill = None if np.linalg.norm(bg - 255) < 40 else "".join(f"{int(v):02X}" for v in bg)
+    color = None
+    if m.sum() > 20:
+        d = np.linalg.norm(a.astype(np.float32) - rows[:, None, :], axis=2)
+        core = m & (d >= np.percentile(d[m], 60))  # lõi nét (bỏ viền khử răng cưa pha màu nền)
+        c = np.median(a[core], axis=0)
+        sat = (c.max() - c.min()) / max(1.0, c.max())
+        if c.max() > 90 and (sat > 0.25 or c.min() > 170):  # có màu rõ, hoặc chữ sáng (trắng) trên nền tối
+            color = "".join(f"{int(v):02X}" for v in c)
+    return color, fill
 
 
 def text_bands(img: Image.Image, box) -> list[tuple[int, int]]:
@@ -173,8 +250,22 @@ def column_bounds(img: Image.Image, box, n_cols: int) -> list[float] | None:
     if n_cols <= 1:
         return None
     ink = _ink(img, box)
-    h = ink.shape[0]
+    h, w = ink.shape
     cols = ink.sum(axis=0)
+    # bảng có kẻ dọc (kể cả xám nhạt): ranh giới = ĐÚNG đường kẻ (khi đủ số cột)
+    inner_v = [x for x in table_rules(img, box)["v"] if 0.01 * w < x < 0.99 * w]
+    if len(inner_v) == n_cols - 1:
+        return [0.0] + inner_v + [float(w)]
+    rule_x = np.nonzero(cols > 0.85 * h)[0]
+    rules = []
+    for x in rule_x:
+        if rules and x - rules[-1][-1] <= 2:
+            rules[-1].append(x)
+        else:
+            rules.append([x])
+    inner = [float(np.mean(r)) for r in rules if 0.01 * w < np.mean(r) < 0.99 * w]
+    if len(inner) == n_cols - 1:
+        return [0.0] + inner + [float(w)]
     cols = np.where(cols > 0.85 * h, 0, cols)  # đường kẻ dọc → coi như trắng (là ranh giới)
     empty = cols == 0
     gaps, start = [], None
@@ -184,7 +275,8 @@ def column_bounds(img: Image.Image, box, n_cols: int) -> list[float] | None:
         elif not v and start is not None:
             gaps.append((start, x))
             start = None
-    gaps = [g for g in gaps if g[0] > 0 and g[1] < len(empty)]  # bỏ khe ở mép
+    edge = max(3, 0.02 * len(empty))  # bỏ khe ở mép (lề trong bảng, viền ngoài)
+    gaps = [g for g in gaps if g[0] > edge and g[1] < len(empty) - edge]
     if len(gaps) < n_cols - 1:
         return None
     best = sorted(sorted(gaps, key=lambda g: g[1] - g[0], reverse=True)[: n_cols - 1])
@@ -197,16 +289,20 @@ def _esc(s: str) -> str:
     return _html.escape(s, quote=False)
 
 
-def _run(text: str, size_pt: float, bold=False, rtl=False, color: str | None = None) -> str:
+def _run(text: str, size_pt: float, bold=False, rtl=False, color: str | None = None, sx: float = 1.0) -> str:
+    """Cỡ chữ Word chỉ có bước 0,5 pt (~4% ở cỡ 12) → làm tròn cỡ chữ, phần chênh bề ngang bù bằng co giãn ngang
+    w:w (bước 1%). Thứ tự phần tử theo lược đồ CT_RPr (Word khắt khe hơn LibreOffice)."""
     sz = max(2, int(round(size_pt * 2)))
+    scale = int(round(100 * sx * size_pt * 2 / sz))  # bù luôn phần làm tròn cỡ chữ
+    scale = min(600, max(1, scale))
     # đoạn tiếng Ả Rập: MỘT phông cho cả đoạn (kể cả số, chữ Latin) — trộn phông thì mỗi chương trình chia chiều cao
     # dòng theo phông khác nhau (LibreOffice lấy tỉ lệ của phông Latin) → nét chữ lệch dọc
     ar = ar_family()
     fa = ar if rtl else FONT
     rpr = (f'<w:rPr><w:rFonts w:ascii="{fa}" w:hAnsi="{fa}" w:cs="{ar}" w:eastAsia="{fa}"/>'
            f'{"<w:b/><w:bCs/>" if bold else ""}{f"<w:color w:val={chr(34)}{color}{chr(34)}/>" if color else ""}'
-           f'{"<w:rtl/>" if rtl else ""}'
-           f'<w:sz w:val="{sz}"/><w:szCs w:val="{sz}"/></w:rPr>')
+           f'{f"<w:w w:val={chr(34)}{scale}{chr(34)}/>" if scale != 100 else ""}'
+           f'<w:sz w:val="{sz}"/><w:szCs w:val="{sz}"/>{"<w:rtl/>" if rtl else ""}</w:rPr>')
     return f'<w:r>{rpr}<w:t xml:space="preserve">{_esc(text)}</w:t></w:r>'
 
 
@@ -215,8 +311,10 @@ def _br(size_pt: float) -> str:
 
 
 def _para(lines: list[list[tuple[str, bool]]], size_pt: float, line_pt: float, rtl: bool, align: str,
-          ind_left: int = 0, ind_right: int = 0, color: str | None = None) -> str:
-    """Một đoạn; mỗi dòng là danh sách (chữ, đậm); giữa các dòng chèn ngắt dòng cứng. ind_*: thụt lề (twip)."""
+          ind_left: int = 0, ind_right: int = 0, color: str | None = None, sx: float = 1.0) -> str:
+    """Một đoạn; mỗi dòng là danh sách (chữ, đậm); giữa các dòng chèn ngắt dòng cứng.
+    ind_left / ind_right: thụt lề (twip) ở mép TRÁI / PHẢI thật trên trang. Đoạn bidi: w:left là mép ĐẦU dòng (= phải),
+    w:right là mép cuối (= trái) — ECMA-376 §17.3.1.12, đã thử trên LibreOffice → đổi chỗ khi ghi."""
     jc = align  # đoạn bidi ("distribute": căn đều kể cả dòng cuối): "start" = phải, "end" = trái (LibreOffice hiểu "right" của đoạn bidi thành trái)
     if rtl and align == "right":
         jc = "start"
@@ -224,12 +322,13 @@ def _para(lines: list[list[tuple[str, bool]]], size_pt: float, line_pt: float, r
         jc = "end"
     ppr = (f'<w:pPr>{"<w:bidi/>" if rtl else ""}<w:spacing w:before="0" w:after="0" '
            f'w:line="{max(20, int(round(line_pt * TWIP_PER_PT)))}" w:lineRule="exact"/>'
-           f'<w:ind w:left="{max(0, ind_left)}" w:right="{max(0, ind_right)}"/><w:jc w:val="{jc}"/></w:pPr>')
+           f'<w:ind w:left="{max(0, ind_right if rtl else ind_left)}" w:right="{max(0, ind_left if rtl else ind_right)}"/>'
+           f'<w:jc w:val="{jc}"/></w:pPr>')
     body = []
     for i, line in enumerate(lines):
         if i:
             body.append(_br(size_pt))
-        body += [_run(t, size_pt, b, rtl, color) for t, b in line if t]
+        body += [_run(t, size_pt, b, rtl, color, sx) for t, b in line if t]
     return f"<w:p>{ppr}{''.join(body)}</w:p>"
 
 
@@ -243,7 +342,7 @@ def font_metrics(text: str, bold: bool = False) -> tuple[float, float, float]:
 
 def _line_paras(lines: list[list[tuple[str, bool]]], size_pt: float, pitch_pt: float, rtl: bool, align: str,
                 ind_left: int = 0, ind_right: int = 0, natural_pt: float | None = None, justify: bool = False,
-                color: str | None = None) -> str:
+                color: str | None = None, sx: float = 1.0) -> str:
     """Mỗi dòng một đoạn, chiều cao dòng = chiều cao TỰ NHIÊN của phông (không có phần thừa để chương trình chia
     lên/xuống), khoảng cách dòng tạo bằng spacing-before → vị trí nét chữ như nhau trên Word, LibreOffice."""
     nat = natural_pt or size_pt * 1.117
@@ -253,7 +352,7 @@ def _line_paras(lines: list[list[tuple[str, bool]]], size_pt: float, pitch_pt: f
         # đoạn căn đều: mọi dòng trừ dòng cuối giãn đủ bề rộng ("distribute" = căn đều cả dòng đơn)
         a = "distribute" if justify and i < len(lines) - 1 else align
         h = nat if (i == 0 or gap >= 0) else pitch_pt  # dòng gốc sát hơn chiều cao tự nhiên → dùng đúng khoảng gốc
-        para = _para([line], size_pt, h, rtl, a, ind_left, ind_right, color)
+        para = _para([line], size_pt, h, rtl, a, ind_left, ind_right, color, sx)
         if i and gap > 0:
             para = para.replace('w:before="0"', f'w:before="{int(round(gap * TWIP_PER_PT))}"', 1)
         out.append(para)
@@ -269,10 +368,10 @@ def _segments(line: str) -> list[tuple[str, bool]]:
     return out or [("", False)]
 
 
-def _anchor(inner_graphic: str, x, y, cx, cy, ident: int, z: int, name: str) -> str:
+def _anchor(inner_graphic: str, x, y, cx, cy, ident: int, z: int, name: str, behind: bool = False) -> str:
     return (
         f'<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="{z}" '
-        f'behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+        f'behindDoc="{1 if behind else 0}" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
         f'<wp:positionH relativeFrom="page"><wp:posOffset>{int(x)}</wp:posOffset></wp:positionH>'
         f'<wp:positionV relativeFrom="page"><wp:posOffset>{int(y)}</wp:posOffset></wp:positionV>'
         f'<wp:extent cx="{int(cx)}" cy="{int(cy)}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/>'
@@ -447,97 +546,310 @@ def _ink_extent_x(img, box) -> tuple[float, float] | None:
     return float(xs.min()), float(xs.max() + 1)
 
 
-def table_xml(table_html: str, img, box, scale_pt: float) -> str:
-    """Bảng trong hộp chữ: độ rộng cột từ ảnh, chiều cao dòng theo dải chữ, cỡ chữ vừa ô."""
+def table_rules(img, box) -> dict:
+    """Đường kẻ của bảng, kể cả kẻ XÁM NHẠT (ngưỡng mực chữ bỏ qua): vị trí ngang / dọc (toạ độ trong khối), màu, độ dày."""
+    x1, y1, x2, y2 = [int(round(v)) for v in box]
+    a = np.asarray(img.convert("RGB").crop((x1, y1, max(x2, x1 + 1), max(y2, y1 + 1))), dtype=np.float32)
+    if a.size == 0:
+        return {"h": [], "v": [], "color": None, "px": 1}
+    g = a.mean(axis=2)
+    bg = float(np.percentile(g, 90))
+    dark = g < bg - 25
+    h, w = dark.shape
+
+    def group(idx, cover):
+        out = []
+        for i in idx:
+            if out and i - out[-1][-1] <= 1:
+                out[-1].append(i)
+            else:
+                out.append([i])
+        return [(float(np.mean(gp)), len(gp)) for gp in out]
+
+    # đường kẻ phải MẢNH: dải nền tối dày (hàng tiêu đề) không phải đường kẻ
+    hl = [(p, n) for p, n in group(np.nonzero(dark.mean(axis=1) > 0.6)[0], None) if n <= max(6, 0.01 * h)]
+    vl = [(p, n) for p, n in group(np.nonzero(dark.mean(axis=0) > 0.6)[0], None) if n <= max(6, 0.01 * w)]
+    color, px = None, 1
+    pix = []
+    for y, n in hl[:4]:
+        pix.append(a[int(y), :][dark[int(y), :]])
+    for x, n in vl[:4]:
+        pix.append(a[:, int(x)][dark[:, int(x)]])
+    pix = [p for p in pix if len(p)]
+    if pix:
+        c = np.median(np.concatenate(pix), axis=0)
+        color = "".join(f"{int(v):02X}" for v in c)
+        px = int(np.median([n for _, n in hl + vl]))
+    return {"h": [y for y, _ in hl], "v": [x for x, _ in vl], "color": color, "px": max(1, px), "size": (w, h)}
+
+
+def _row_cuts(img, box, bands, n_rows: int) -> list[float]:
+    """Ranh giới các dòng bảng (toạ độ trong khối): đường kẻ ngang nếu đủ, không thì khe trắng LỚN NHẤT giữa các dải
+    chữ (ô nhiều dòng vẫn đúng), cuối cùng mới chia đều."""
+    x1, y1, x2, y2 = box
+    bh = y2 - y1
+    inner = [m for m in table_rules(img, box)["h"] if 0.02 * bh < m < 0.98 * bh]
+    if len(inner) == n_rows - 1:  # kẻ ngang giữa các dòng
+        return [0.0] + inner + [float(bh)]
+    if len(bands) >= n_rows and n_rows > 1:
+        gaps = sorted(range(len(bands) - 1), key=lambda k: -(bands[k + 1][0] - bands[k][1]))[:n_rows - 1]
+        cuts = sorted((bands[k][1] + bands[k + 1][0]) / 2 for k in gaps)
+        return [0.0] + cuts + [float(bh)]
+    return [bh * k / n_rows for k in range(n_rows + 1)]
+
+
+def _ink_box(img, box) -> tuple[float, float, float, float] | None:
+    """Hộp mực (toạ độ trang) trong vùng, bỏ đường kẻ ngang / dọc dài (viền ô)."""
+    ink = _ink(img, box)
+    if ink.size == 0:
+        return None
+    h, w = ink.shape
+
+    def near_lines(cover, n):  # đường kẻ (+ 2 px hai bên: viền khử răng cưa của đường kẻ)
+        m = cover > 0.5 * n
+        for k in (1, 2):
+            m = m | np.roll(m, k) | np.roll(m, -k)
+        return m
+
+    ink = ink & ~near_lines(ink.sum(axis=1), w)[:, None] & ~near_lines(ink.sum(axis=0), h)[None, :]
+    ys, xs = np.nonzero(ink)
+    if len(xs) < 4:
+        return None
+    x0, y0 = int(round(box[0])), int(round(box[1]))
+    return (x0 + float(xs.min()), y0 + float(ys.min()), x0 + float(xs.max() + 1), y0 + float(ys.max() + 1))
+
+
+def table_spec(img, box, table_html: str) -> dict:
+    """Mọi thông số đặt một bảng (px ảnh): cột theo THỨ TỰ HIỂN THỊ (trái → phải), dòng, cỡ chữ, từng ô (vùng, hộp mực
+    gốc, kiểu căn). Bảng phải → trái (bidiVisual): ô đầu tiên của dòng trong HTML là cột NGOÀI CÙNG BÊN PHẢI."""
     rows = table_rows(table_html)
+    x1, y1, x2, y2 = box
     if not rows:
-        return _para([[(plain_text(table_html), False)]], 8, 9, False, "left")
+        return {"kind": "table", "box": box, "cells": [], "empty": plain_text(table_html)}
     n_rows = len(rows)
     n_cols, placed, _ = _grid(rows)
-    x1, y1, x2, y2 = box
     bw, bh = x2 - x1, y2 - y1
     bounds = column_bounds(img, box, n_cols) or [bw * k / n_cols for k in range(n_cols + 1)]
-    col_w = [bounds[k + 1] - bounds[k] for k in range(n_cols)]
+    col_w = [bounds[k + 1] - bounds[k] for k in range(n_cols)]  # theo thứ tự hiển thị
     bands = text_bands(img, box)
-    if len(bands) == n_rows:  # mỗi dải chữ là một dòng bảng → ranh giới dòng = giữa hai dải
-        cuts = [0.0] + [(bands[k][1] + bands[k + 1][0]) / 2 for k in range(n_rows - 1)] + [float(bh)]
-    else:
-        cuts = [bh * k / n_rows for k in range(n_rows + 1)]
+    cuts = _row_cuts(img, box, bands, n_rows)
     row_h = [cuts[k + 1] - cuts[k] for k in range(n_rows)]
-    glyph = np.median([b[1] - b[0] for b in bands]) if bands else min(row_h) * 0.6
-    size = min(glyph / 0.78, min(row_h) / 1.25)
-    pad = 0.06 * size
-    for _ in range(30):  # mọi ô vừa bề rộng cột (cho phép xuống dòng nhưng không quá chiều cao dòng)
-        ok = True
+    texts = " ".join(t for _, _, t, _, _, _ in placed)
+    size = min(row_h) / 1.6  # tạm, tính lại từ mực từng ô bên dưới
+
+    def vis(c, cs, rtl):  # cột logic → cột hiển thị bắt đầu (trái)
+        return n_cols - c - cs if rtl else c
+
+    def cell_boxes(rtl):
+        out = []
         for r, c, text, cs, rs, th in placed:
-            w = sum(col_w[c:c + cs]) - 2 * pad
-            h = sum(row_h[r:r + rs])
-            n = sum(len(wrap(line, w, size, th)) for line in (text.split("\n") or [""]))
-            a_, d_, _ = font_metrics(text or "H", th)
+            v = vis(c, cs, rtl)
+            region = (x1 + bounds[v], y1 + cuts[r], x1 + bounds[v + cs], y1 + cuts[min(n_rows, r + rs)])
+            out.append((region, _ink_box(img, region)))
+        return out
+
+    # hướng bảng: mặc định theo chữ (Ả Rập → phải → trái), kiểm chứng bằng ảnh: bề rộng chữ dự đoán ↔ bề rộng mực đo
+    def agree(rtl):
+        err = 0.0
+        for (r, c, text, cs, rs, th), (_, ib) in zip(placed, cell_boxes(rtl)):
+            t = text.split("\n")[0].strip()
+            if t and ib:
+                err += abs(np.log(max(1.0, text_width(t, size, th)) / max(1.0, ib[2] - ib[0])))
+            elif t or ib:
+                err += 1.0
+        return err
+
+    rtl = is_rtl(texts)
+
+    def size_from_cells(rtl_):  # trung vị cỡ chữ ước từ chiều cao mực của các ô một dòng
+        est = []
+        for (r, c, text, cs, rs, th), (_, ib) in zip(placed, cell_boxes(rtl_)):
+            t = text.strip()
+            if t and ib and "\n" not in t:
+                est.append((ib[3] - ib[1]) / ink_ratio(t, th))
+        return float(np.median(est)) if est else size
+
+    size = min(size_from_cells(rtl), min(row_h) / 1.05)
+    if n_cols > 1 and agree(not rtl) < 0.8 * agree(rtl):
+        rtl = not rtl
+        size = min(size_from_cells(rtl), min(row_h) / 1.05)
+    cells = []
+    for (r, c, text, cs, rs, th), (region, ib) in zip(placed, cell_boxes(rtl)):
+        cell_rtl = para_rtl(text) if _STRONG.search(text) else rtl
+        cw = region[2] - region[0]
+        align = "right" if cell_rtl else "left"
+        if ib and text.strip():
+            lg, rg = ib[0] - region[0], region[2] - ib[2]
+            if lg > 0.06 * cw and rg > 0.06 * cw and abs(lg - rg) < 0.3 * max(lg, rg):
+                align = "center"
+            elif rg < lg:
+                align = "right"
+            else:
+                align = "left"
+        bidi = {}
+        if cell_rtl and ib and text.strip() and "\n" not in text:
+            from .arabic_bidi import fix_line
+
+            g = np.asarray(img.convert("L").crop(tuple(int(round(v)) for v in ib)))
+            fixed, forced = fix_line(text, ink_mask(g), _font(th, 64, True, ar_family()))
+            if forced:
+                bidi[text] = fixed
+        color, fill = ink_colors(img, region)
+        cells.append({"kind": "cell", "r": r, "c": c, "cs": cs, "rs": rs, "text": text, "th": th, "rtl": cell_rtl,
+                      "bidi": bidi, "color": color, "fill": fill,
+                      "box": region, "ink": ib if text.strip() else None, "align": align, "fs": 1.0, "dx": 0.0,
+                      "dy": 0.0, "justify": False, "segs": [[(text.split("\n")[0], th)]]})
+    # cỡ chữ chung: mọi ô vừa bề rộng cột (cho phép xuống dòng nhưng không quá chiều cao dòng)
+    for _ in range(30):
+        ok = True
+        for cl in cells:
+            w = cl["box"][2] - cl["box"][0]
+            h = cl["box"][3] - cl["box"][1]
+            n = sum(len(wrap(line, w * 0.98, size, cl["th"])) for line in (cl["text"].split("\n") or [""]))
+            a_, d_, _ = font_metrics(cl["text"] or "H", cl["th"])
             if n * size * (a_ + d_) > h * 1.02:
                 ok = False
                 break
         if ok:
             break
         size *= 0.95
-    tw = lambda px: int(round(px * scale_pt * TWIP_PER_PT))  # noqa: E731
-    size_pt = size * scale_pt
-    borders = any(len(_ink(img, (x1, y1 + int(cuts[k]) - 2, x2, y1 + int(cuts[k]) + 2)).shape) and
-                  _ink(img, (x1, y1 + int(cuts[k]) - 2, x2, y1 + int(cuts[k]) + 2)).sum(axis=1).max() > 0.6 * bw
-                  for k in range(1, n_rows))
-    bd = '<w:{s} w:val="single" w:sz="4" w:space="0" w:color="000000"/>' if borders else '<w:{s} w:val="nil"/>'
-    tbl_borders = "".join(bd.format(s=s) for s in ("top", "left", "bottom", "right", "insideH", "insideV"))
-    rtl = is_rtl(" ".join(t for _, _, t, _, _, _ in placed))
-    out = [f'<w:tbl><w:tblPr><w:tblW w:w="{tw(bw)}" w:type="dxa"/>{"<w:bidiVisual/>" if rtl else ""}'
-           f'<w:tblLayout w:type="fixed"/><w:tblBorders>{tbl_borders}</w:tblBorders>'
-           f'<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="{tw(pad)}" w:type="dxa"/>'
-           f'<w:bottom w:w="0" w:type="dxa"/><w:right w:w="{tw(pad)}" w:type="dxa"/></w:tblCellMar></w:tblPr>'
-           "<w:tblGrid>" + "".join(f'<w:gridCol w:w="{tw(w)}"/>' for w in col_w) + "</w:tblGrid>"]
-    by_row: dict[int, list] = {}
-    for p in placed:
-        by_row.setdefault(p[0], []).append(p)
+    for cl in cells:  # số dòng chữ THẬT trong ô (giữ đúng số dòng khi dựng, kể cả khi co giãn ngang)
+        cl["n_lines"] = max(1, len(text_bands(img, cl["box"]))) if cl["ink"] else 1
+    # chữ sát mép trên ô: dời ranh giới dòng lên (dòng > 0) hoặc thêm lề trên cho cả bảng (dòng 0) — khoảng trên
+    # của đoạn không thể âm
+    def need_top(cl):
+        t = cl["text"].split("\n")[0] or "H"
+        return cl["ink"][1] - font_metrics(t, cl["th"])[2] * size - 1
+    pad_top = 0.0
     for r in range(n_rows):
-        out.append(f'<w:tr><w:trPr><w:trHeight w:val="{tw(row_h[r])}" w:hRule="atLeast"/></w:trPr>')
-        cells = sorted(by_row.get(r, []), key=lambda p: p[1])
+        starts = [cl for cl in cells if cl["r"] == r and cl["ink"]]
+        if not starts:
+            continue
+        need = min(need_top(cl) for cl in starts) - y1  # toạ độ trong khối
+        if r == 0:
+            pad_top = max(0.0, -need)
+        elif need < cuts[r]:
+            above = [cl["ink"][3] - y1 for cl in cells if cl["r"] + cl["rs"] == r and cl["ink"]]
+            cuts[r] = max(need, (max(above) + 1) if above else cuts[r - 1] + 1)
+    row_h = [cuts[k + 1] - cuts[k] for k in range(n_rows)]
+    for cl in cells:  # vùng ô theo ranh giới dòng mới
+        bx1, _, bx2, _ = cl["box"]
+        cl["box"] = (bx1, y1 + cuts[cl["r"]] - (pad_top if cl["r"] == 0 else 0), bx2,
+                     y1 + cuts[min(n_rows, cl["r"] + cl["rs"])])
+    if pad_top:
+        row_h[0] += pad_top
+    rl = table_rules(img, box)
+    near = lambda vals, at, tol: any(abs(v - at) <= tol for v in vals)  # noqa: E731
+    tol_y, tol_x = max(4.0, 0.02 * bh), max(4.0, 0.01 * bw)
+    inner_h = [v for v in rl["h"] if tol_y < v < bh - tol_y]
+    inner_v = [v for v in rl["v"] if tol_x < v < bw - tol_x]
+    borders = {"top": near(rl["h"], 0, tol_y), "bottom": near(rl["h"], bh, tol_y),
+               "left": near(rl["v"], 0, tol_x), "right": near(rl["v"], bw, tol_x),
+               "insideH": n_rows > 1 and len(inner_h) >= (n_rows - 1) / 2,
+               "insideV": n_cols > 1 and len(inner_v) >= (n_cols - 1) / 2,
+               "color": rl["color"] or "000000", "px": rl["px"]}
+    return {"kind": "table", "box": box, "n_rows": n_rows, "n_cols": n_cols, "rtl": rtl, "col_w": col_w,
+            "row_h": row_h, "size": size, "borders": borders, "cells": cells, "pad_top": pad_top}
+
+
+def _cell_xml(cl: dict, size: float, scale_pt: float, w_px: float, color: str | None) -> str:
+    """Nội dung một ô: các dòng chữ, căn + thụt lề sao cho mực rơi đúng toạ độ gốc; khoảng trên = đúng vị trí dọc."""
+    tw = lambda px: int(round(max(0.0, px) * scale_pt * TWIP_PER_PT))  # noqa: E731
+    th, rtl = cl["th"], cl["rtl"]
+    sz = size * cl["fs"]
+    x1, y1, x2, y2 = cl["box"]
+    ib = cl["ink"]
+    if not cl["text"].strip():
+        return _para([[("", False)]], sz * scale_pt, sz * scale_pt, rtl, "left")
+    al = cl["align"]
+    il = ir = 0.0
+    if ib:
+        if al == "left":
+            il = ib[0] - x1 + cl["dx"]
+        elif al == "right":
+            ir = x2 - ib[2] - cl["dx"]
+        else:  # giữa: lệch tâm = (il - ir) / 2
+            off = ((ib[0] + ib[2]) / 2 - (x1 + x2) / 2 + cl["dx"]) * 2
+            il, ir = max(0.0, off), max(0.0, -off)
+    avail = max(4.0, w_px - il - ir)
+    lines = []
+    sx = cl.get("sx", 1.0)
+    if cl.get("n_lines", 1) == 1 and "\n" not in cl["text"]:
+        lines = [cl["text"]]  # ô một dòng trên ảnh → một dòng (co giãn ngang không được làm xuống dòng)
+    else:
+        for line in cl["text"].split("\n"):
+            lines += wrap(line, avail * 1.02 / sx, sz, th)
+    if rtl:
+        lines = [cl.get("bidi", {}).get(ln, ln) for ln in lines]
+    asc, desc, top = font_metrics(lines[0] if lines else "H", th)
+    nat = (asc + desc) * sz
+    before = 0.0
+    if ib:
+        before = ib[1] - y1 - top * sz + cl["dy"]  # mép trên nét chữ = mép trên mực gốc trong ô
+    segs = [[(ln, th)] for ln in lines]
+    xml = _line_paras(segs, sz * scale_pt, nat * scale_pt, rtl, al, tw(il), tw(ir), nat * scale_pt, False, color, sx)
+    if before > 0:
+        xml = xml.replace('w:before="0"', f'w:before="{tw(before)}"', 1)
+    return xml
+
+
+def table_xml_spec(spec: dict, scale_pt: float, colors: dict | None = None) -> str:
+    """Bảng (trong hộp chữ) từ kế hoạch: lưới cột cố định, dòng cao ĐÚNG như ảnh, mỗi ô đặt chữ theo mực gốc."""
+    if not spec["cells"]:
+        return _para([[(spec.get("empty", ""), False)]], 8, 9, False, "left")
+    tw = lambda px: int(round(max(0.0, px) * scale_pt * TWIP_PER_PT))  # noqa: E731
+    n_cols, rtl = spec["n_cols"], spec["rtl"]
+    col_w = spec["col_w"]
+    logical_w = col_w[::-1] if rtl else col_w  # bidiVisual: cột lưới đầu tiên là cột bên PHẢI
+    b = spec["borders"]
+    if not isinstance(b, dict):  # kế hoạch cũ (True/False)
+        b = {k: bool(b) for k in ("top", "left", "bottom", "right", "insideH", "insideV")} | {"color": "000000", "px": 1}
+    eighths = max(2, min(96, int(round(b["px"] * scale_pt * 8))))  # độ dày theo 1/8 pt
+    tbl_borders = "".join(
+        f'<w:{x} w:val="single" w:sz="{eighths}" w:space="0" w:color="{b["color"]}"/>' if b.get(x) else f'<w:{x} w:val="nil"/>'
+        for x in ("top", "left", "bottom", "right", "insideH", "insideV"))
+    out = [f'<w:tbl><w:tblPr>{"<w:bidiVisual/>" if rtl else ""}<w:tblW w:w="{tw(sum(col_w))}" w:type="dxa"/>'
+           f'<w:tblBorders>{tbl_borders}</w:tblBorders><w:tblLayout w:type="fixed"/>'
+           '<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/>'
+           '<w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr>'
+           "<w:tblGrid>" + "".join(f'<w:gridCol w:w="{tw(w)}"/>' for w in logical_w) + "</w:tblGrid>"]
+    by_row: dict[int, list] = {}
+    for cl in spec["cells"]:
+        by_row.setdefault(cl["r"], []).append(cl)
+    size = spec["size"]
+    empty = _para([[("", False)]], size * scale_pt, size * scale_pt, False, "left")
+    for r in range(spec["n_rows"]):
+        out.append(f'<w:tr><w:trPr><w:trHeight w:val="{tw(spec["row_h"][r])}" w:hRule="exact"/></w:trPr>')
         c_expect = 0
-        for _, c, text, cs, rs, th in cells:
+        for cl in sorted(by_row.get(r, []), key=lambda x: x["c"]):
+            c, cs, rs = cl["c"], cl["cs"], cl["rs"]
             while c_expect < c:  # ô bị gộp dọc từ dòng trên
-                out.append(f'<w:tc><w:tcPr><w:tcW w:w="{tw(col_w[c_expect])}" w:type="dxa"/><w:vMerge/></w:tcPr>'
-                           f"{_para([[('', False)]], size_pt, size_pt * 1.15, False, 'left')}</w:tc>")
+                out.append(f'<w:tc><w:tcPr><w:tcW w:w="{tw(logical_w[c_expect])}" w:type="dxa"/><w:vMerge/></w:tcPr>'
+                           f"{empty}</w:tc>")
                 c_expect += 1
-            w = sum(col_w[c:c + cs])
-            lines = []
-            for line in text.split("\n"):
-                lines += wrap(line, w - 2 * pad, size, th)
-            cell_rtl = bool(_ARABIC.search(text))
-            # vị trí chữ THẬT trong ô (đo mực trên ảnh) → thụt lề để chữ bắt đầu / kết thúc đúng toạ độ gốc
-            cx1, cx2 = x1 + bounds[c], x1 + bounds[c + cs]
-            ext = _ink_extent_x(img, (cx1, y1 + cuts[r], cx2, y1 + cuts[min(n_rows, r + rs)]))
-            ind_l = ind_r = 0
-            if ext and text.strip():
-                left_gap, right_gap = ext[0] - pad, (cx2 - cx1) - ext[1] - pad
-                if cell_rtl or right_gap < left_gap * 0.5:  # chữ dồn về phải (số, tiếng Ả Rập)
-                    align, ind_r = "right", tw(max(0.0, right_gap))
-                else:
-                    align, ind_l = "left", tw(max(0.0, left_gap))
-                if ind_l and lines and max(text_width(ln, size, th) for ln in lines) + ind_l / scale_pt / TWIP_PER_PT > w - 2 * pad:
-                    ind_l = 0  # không đủ chỗ thì thôi thụt lề (tránh xuống dòng thừa)
-            else:
-                align = "left"
-            tcpr = (f'<w:tcPr><w:tcW w:w="{tw(w)}" w:type="dxa"/>{f"<w:gridSpan w:val={chr(34)}{cs}{chr(34)}/>" if cs > 1 else ""}'
-                    f'{"<w:vMerge w:val=" + chr(34) + "restart" + chr(34) + "/>" if rs > 1 else ""}<w:vAlign w:val="center"/></w:tcPr>')
-            a_, d_, _ = font_metrics(text or "H", th)
-            nat_pt = size_pt * (a_ + d_)  # chiều cao dòng tự nhiên của phông thật trong ô
-            out.append(f"<w:tc>{tcpr}{_para([[(ln, th)] for ln in lines] or [[('', False)]], size_pt, nat_pt, cell_rtl, align, ind_l, ind_r)}</w:tc>")
+            w = sum(logical_w[c:c + cs])
+            tcpr = (f'<w:tcPr><w:tcW w:w="{tw(w)}" w:type="dxa"/>'
+                    f'{f"<w:gridSpan w:val={chr(34)}{cs}{chr(34)}/>" if cs > 1 else ""}'
+                    f'{"<w:vMerge w:val=" + chr(34) + "restart" + chr(34) + "/>" if rs > 1 else ""}'
+                    '<w:vAlign w:val="top"/></w:tcPr>')
+            if colors is None and cl.get("fill"):  # nền ô (không dùng khi hiệu chỉnh: lẫn với màu đo)
+                tcpr = tcpr.replace('<w:vAlign', f'<w:shd w:val="clear" w:color="auto" w:fill="{cl["fill"]}"/><w:vAlign')
+            color = colors.get(id(cl)) if colors else cl.get("color")
+            out.append(f"<w:tc>{tcpr}{_cell_xml(cl, size, scale_pt, w, color)}</w:tc>")
             c_expect = c + cs
         while c_expect < n_cols:
-            out.append(f'<w:tc><w:tcPr><w:tcW w:w="{tw(col_w[c_expect])}" w:type="dxa"/><w:vMerge/></w:tcPr>'
-                       f"{_para([[('', False)]], size_pt, size_pt * 1.15, False, 'left')}</w:tc>")
+            out.append(f'<w:tc><w:tcPr><w:tcW w:w="{tw(logical_w[c_expect])}" w:type="dxa"/><w:vMerge/></w:tcPr>'
+                       f"{empty}</w:tc>")
             c_expect += 1
         out.append("</w:tr>")
     out.append("</w:tbl>")
     out.append(_para([[("", False)]], 1, 1, False, "left"))  # Word cần một đoạn sau bảng trong hộp chữ
     return "".join(out)
+
+
+def table_xml(table_html: str, img, box, scale_pt: float) -> str:
+    """Bảng trong hộp chữ (không hiệu chỉnh) — giữ cho mã cũ / thử nghiệm."""
+    return table_xml_spec(table_spec(img, box, table_html), scale_pt)
 
 
 # ------------------------------------------------------------------ nhúng phông
@@ -620,7 +932,7 @@ def text_spec(img, box, text: str, cat: str) -> dict:
     x1, y1, x2, y2 = box
     original = plain_text(text)
     bold = cat in HEADING_CATEGORIES
-    rtl = bool(_ARABIC.search(original)) and is_rtl(original)
+    rtl = para_rtl(original.replace("**", ""))
     bands = text_bands(img, box)
     n = len(bands) or 1
     pitch = (bands[-1][0] - bands[0][0]) / (n - 1) if n > 1 else None
@@ -644,8 +956,23 @@ def text_spec(img, box, text: str, cat: str) -> dict:
     else:
         align, box_w = ("end" if rtl else "left"), bw - lg
     size, spacing, lines = fit_text(original, box_w, y2 - y1, n, pitch, bold, size0)
+    bidi_forced = []
     if rtl:
-        segs = [[(t.replace("**", ""), bold)] for t in lines]
+        from .arabic_bidi import fix_line
+
+        fixed = []
+        gray = None
+        for i, t in enumerate(lines):
+            t = t.replace("**", "")
+            if len(lines) == n and bands:  # dòng i ↔ dải mực i trên ảnh → chọn thứ tự số / Latin khớp ảnh
+                if gray is None:
+                    gray = np.asarray(img.convert("L"))
+                b0, b1 = bands[i]
+                ink = ink_mask(gray[int(y1 + b0):int(y1 + b1) + 1, int(x1):int(round(x2))])
+                t, forced = fix_line(t, ink, _font(bold, 64, True, ar_family()))
+                bidi_forced += forced
+            fixed.append(t)
+        segs = [[(t, bold)] for t in fixed]
     else:
         segs = _reapply_bold(original if not bold else original.replace("**", ""), lines)
         if bold:
@@ -659,13 +986,14 @@ def text_spec(img, box, text: str, cat: str) -> dict:
             full = [e[1] for e in edges] if not rtl else [e[0] for e in edges]
             ref = max(full) if not rtl else min(full)
             justify = all(abs(v - ref) < 0.012 * bw for v in full)
+    color, _ = ink_colors(img, box)
     ink = None  # hộp mực gốc (toạ độ trang) — đích để hiệu chỉnh
     if ext and bands:
         ink = (x1 + ext[0], y1 + bands[0][0], x1 + ext[1], y1 + bands[-1][1])
     return {"box": (x1, y1, x2, y2), "segs": segs, "size": size, "em": asc + desc, "top": top, "n_src": n,
             "pitch": pitch if (pitch and len(lines) == n) else None, "spacing": spacing, "align": align, "rtl": rtl,
             "justify": justify, "lg": lg, "rg": rg, "ink": ink, "fs": 1.0, "dx": 0.0, "dy": 0.0,
-            "ink_top": y1 + (bands[0][0] if bands else 0)}
+            "ink_top": y1 + (bands[0][0] if bands else 0), "bidi_forced": bidi_forced, "color": color}
 
 
 def text_xml(spec: dict, k: float, scale_pt: float, color: str | None = None) -> str:
@@ -687,7 +1015,7 @@ def text_xml(spec: dict, k: float, scale_pt: float, color: str | None = None) ->
     else:
         il, ir = tw(spec["lg"] + margin), 0
     content = _line_paras(spec["segs"], size * scale_pt, pitch * scale_pt, spec["rtl"], al, il, ir,
-                          natural * scale_pt, spec["justify"], color)
+                          natural * scale_pt, spec["justify"], color or spec.get("color"), spec.get("sx", 1.0))
     box_y = spec["ink_top"] - spec["top"] * size + spec["dy"]  # mép trên nét chữ dòng đầu trùng ảnh gốc
     box_h = (n - 1) * pitch + natural + 0.3 * size
     box_w = (bw + 2 * margin) * k
@@ -754,6 +1082,17 @@ def _render_pages(soffice: str, docx: Path, sizes: list[tuple[int, int]]) -> lis
         shutil.rmtree(outdir, ignore_errors=True)
 
 
+def _items(specs: list[dict]) -> list[dict]:
+    """Những thứ được đo / sửa khi hiệu chỉnh: khối chữ + từng ô bảng có chữ."""
+    out = []
+    for s in specs:
+        if s.get("kind") == "table":
+            out += [c for c in s["cells"] if c["ink"]]
+        else:
+            out.append(s)
+    return out
+
+
 def _measure(rgb: np.ndarray, specs: list[dict], pal: dict) -> dict:
     """Hộp mực đã dựng của từng khối, nhận theo MÀU riêng của khối (không lẫn khối bên cạnh)."""
     a = rgb.astype(np.float32) / 255.0
@@ -765,15 +1104,26 @@ def _measure(rgb: np.ndarray, specs: list[dict], pal: dict) -> dict:
     hue = np.where(mx == r, ((g - b) / d) % 6, np.where(mx == g, (b - r) / d + 2, (r - g) / d + 4)) / 6.0
     out = {}
     H, W = ink.shape
+
+    def region(s):
+        x1, y1, x2, y2 = s["box"]
+        if s.get("kind") == "cell":  # ô bảng: lệch ít, vùng hẹp
+            pad_x, pad_y = 0.1 * (x2 - x1) + 6, 0.3 * (y2 - y1) + 4
+        else:
+            pad_x, pad_y = 0.06 * (x2 - x1) + 12, 0.35 * (y2 - y1) + 8  # vừa đủ cho lệch, không trùm sang dòng khác
+        return (int(max(0, x1 - pad_x)), int(max(0, y1 - pad_y)), int(min(W, x2 + pad_x)), int(min(H, y2 + pad_y)))
+
+    regs = {id(s): region(s) for s in specs}
     for s in specs:
         _, h0 = pal[id(s)]
-        x1, y1, x2, y2 = s["box"]
-        pad_x, pad_y = 0.06 * (x2 - x1) + 12, 0.35 * (y2 - y1) + 8  # vừa đủ cho lệch, không trùm sang dòng khác
-        X1, Y1 = int(max(0, x1 - pad_x)), int(max(0, y1 - pad_y))
-        X2, Y2 = int(min(W, x2 + pad_x)), int(min(H, y2 + pad_y))
+        X1, Y1, X2, Y2 = regs[id(s)]
+        near = [abs(pal[id(o)][1] - h0) for o in specs if o is not s and not (
+            regs[id(o)][2] <= X1 or regs[id(o)][0] >= X2 or regs[id(o)][3] <= Y1 or regs[id(o)][1] >= Y2)]
+        near = [min(d, 1 - d) for d in near]
+        tol = min(0.02, max(0.004, 0.45 * min(near))) if near else 0.02  # màu lân cận gần → dung sai hẹp lại
         dh = np.abs(hue[Y1:Y2, X1:X2] - h0)
         dh = np.minimum(dh, 1 - dh)
-        m = ink[Y1:Y2, X1:X2] & (dh < 0.02)
+        m = ink[Y1:Y2, X1:X2] & (dh < tol)
         ys, xs = np.nonzero(m)
         if len(xs) > 5:
             out[id(s)] = (X1 + xs.min(), Y1 + ys.min(), X1 + xs.max() + 1, Y1 + ys.max() + 1)
@@ -787,14 +1137,15 @@ def _correct(s: dict, got, apply: bool = True) -> float:
     if not o or not got:
         return 0.0
     dev = max(abs(o[i] - got[i]) for i in range(4))
-    s.setdefault("hist", []).append((dev, s["fs"], s["dx"], s["dy"]))
+    s.setdefault("hist", []).append((dev, s.get("sx", 1.0), s["dx"], s["dy"]))
     if not apply:
         return dev
     ow, gw = o[2] - o[0], got[2] - got[0]
     if gw > 4 and not s["justify"]:
-        ratio = min(1.4, max(0.7, ow / gw))
+        lo, hi = (0.85, 1.18) if s.get("kind") == "cell" else (0.7, 1.4)
+        ratio = min(hi, max(lo, ow / gw))
         if abs(ratio - 1) > 0.004:
-            s["fs"] *= ratio
+            s["sx"] = min(1.6, max(0.6, s.get("sx", 1.0) * ratio))
     al = s["align"]
     if al == "center":
         s["dx"] += (o[0] + o[2]) / 2 - (got[0] + got[2]) / 2
@@ -807,6 +1158,93 @@ def _correct(s: dict, got, apply: bool = True) -> float:
 
 
 # ------------------------------------------------------------------ dựng tài liệu
+
+def _components(m: np.ndarray) -> list[tuple[int, int, int, int, np.ndarray]]:
+    """Các mảnh liền (8 hướng) của mặt nạ → [(x1, y1, x2, y2, toạ độ điểm)] (không cần scipy)."""
+    H, W = m.shape
+    seen = np.zeros_like(m, bool)
+    out = []
+    for y0, x0 in zip(*np.nonzero(m)):
+        if seen[y0, x0]:
+            continue
+        stack, pts = [(y0, x0)], []
+        seen[y0, x0] = True
+        while stack:
+            y, x = stack.pop()
+            pts.append((y, x))
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    yy, xx = y + dy, x + dx
+                    if 0 <= yy < H and 0 <= xx < W and m[yy, xx] and not seen[yy, xx]:
+                        seen[yy, xx] = True
+                        stack.append((yy, xx))
+        p = np.array(pts)
+        out.append((p[:, 1].min(), p[:, 0].min(), p[:, 1].max() + 1, p[:, 0].max() + 1, p))
+    return out
+
+
+def residual_layer(img: Image.Image, boxes: list, text_boxes: list | None = None
+                   ) -> tuple[Image.Image, tuple[int, int]] | None:
+    """Nét mực NẰM NGOÀI mọi khối của model (đường gạch ký tên, kẻ chấm, khung, họa tiết, thứ model bỏ sót) → một
+    ảnh trong suốt (RGBA) đặt dưới chữ, đúng toạ độ.
+    - ngưỡng riêng (khác nền > 60): nhận cả nét xám nhạt mà ngưỡng mực chữ bỏ qua;
+    - lọc nhiễu theo MẬT ĐỘ (giữ đường chấm, bỏ chấm lẻ);
+    - bỏ mảnh nét DÍNH mép một khối chữ (phần chữ bị khung model cắt — chữ đã được dựng lại bằng phông)."""
+    from PIL import ImageFilter
+
+    a = np.asarray(img.convert("RGB"))
+    rows = _bg_rows(a)
+    d = np.linalg.norm(a.astype(np.float32) - rows[:, None, :], axis=2)
+    m = d > 60
+    full = m.copy()
+    H, W = m.shape
+    for x1, y1, x2, y2 in boxes:
+        m[max(0, int(y1) - 2):min(H, int(y2) + 3), max(0, int(x1) - 2):min(W, int(x2) + 3)] = False
+
+    def thin_runs(cov, thr, max_t=4):  # nhóm hàng (cột) liền nhau có độ phủ cao nhưng MẢNH → đường kẻ
+        keep = np.zeros(len(cov), bool)
+        i = 0
+        while i < len(cov):
+            if cov[i] > thr:
+                e = i
+                while e < len(cov) and cov[e] > thr:
+                    e += 1
+                # mảnh VÀ tách biệt: các hàng (cột) ngay trên / dưới gần như trống (nét ngang của chữ thì không)
+                around = [cov[k] for k in (i - 3, i - 2, e + 1, e + 2) if 0 <= k < len(cov)]
+                if e - i <= max_t and (not around or max(around) < 0.35 * float(np.mean(cov[i:e]))):
+                    keep[i:e] = True
+                i = e
+            else:
+                i += 1
+        return keep
+
+    # đường kẻ mảnh chạy dài (kể cả kẻ chấm) giữ NGUYÊN, cả đoạn nằm dưới khung khối của model
+    lines = np.zeros_like(m)
+    lines[thin_runs(full.mean(axis=1), 0.15), :] = True
+    lines[:, thin_runs(full.mean(axis=0), 0.15)] = True
+    m |= full & lines
+    dens = np.asarray(Image.fromarray(m.astype(np.uint8) * 255).filter(ImageFilter.BoxBlur(2)))
+    m &= dens >= 30  # ≥ 3 điểm mực trong ô 5×5
+    if m.sum() < 60:
+        return None
+    for x1, y1, x2, y2, pts in _components(m & ~lines):  # điểm thuộc đường kẻ không bao giờ là "mảnh chữ"
+        for bx1, by1, bx2, by2 in text_boxes or []:
+            bh = by2 - by1
+            tol = max(4.0, 0.3 * bh)  # đuôi chữ (g, y, nét tay) thò ra dưới / trên khung tới ~1/3 chiều cao khối
+            touch = (x1 <= bx2 + tol and x2 >= bx1 - tol and y1 <= by2 + tol and y2 >= by1 - tol)
+            small = (y2 - y1) <= 0.8 * bh and (x2 - x1) <= 2.0 * bh
+            if touch and small:
+                m[pts[:, 0], pts[:, 1]] = False
+                break
+    if m.sum() < 60:
+        return None
+    ys, xs = np.nonzero(m)
+    x1, y1, x2, y2 = xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
+    rgba = np.zeros((y2 - y1, x2 - x1, 4), np.uint8)
+    rgba[..., :3] = a[y1:y2, x1:x2]
+    rgba[..., 3] = m[y1:y2, x1:x2] * 255
+    return Image.fromarray(rgba, "RGBA"), (int(x1), int(y1))
+
 
 def detect_arabic_font(pages: list[tuple[Image.Image, list[dict]]]) -> tuple[str | None, dict]:
     """Phông Ả Rập của tài liệu: lấy các khối chữ Ả Rập MỘT dòng (chữ OCR ↔ đúng một dải mực), so mẫu với thư viện."""
@@ -821,7 +1259,7 @@ def detect_arabic_font(pages: list[tuple[Image.Image, list[dict]]]) -> tuple[str
             if cat in IMAGE_CATEGORIES or cat == "Table" or not bbox or len(bbox) != 4:
                 continue
             t = plain_text(b.get("text") or "").replace("**", "").strip()
-            if "\n" in t or not (_ARABIC.search(t) and is_rtl(t)):
+            if "\n" in t or not (_ARABIC.search(t) and is_rtl(t) and para_rtl(t)):
                 continue
             x1, y1, x2, y2 = [float(v) for v in bbox]
             bands = text_bands(rgb, (x1, y1, x2, y2))
@@ -861,8 +1299,9 @@ def _build_exact(pages, out_path, title, calibrate, rounds) -> dict:
     stats = _build_once(pages, out_path, title, None, specs_by_page)
     if soffice and any(specs_by_page):
         sizes = [im.size for im, _ in pages]
-        all_specs = [s for ps in specs_by_page for s in ps]
-        pal = {id(s): c for s, c in zip(all_specs, _palette(len(all_specs)))}
+        items_by_page = [_items(ps) for ps in specs_by_page]
+        all_items = [s for ps in items_by_page for s in ps]
+        pal = {id(s): c for s, c in zip(all_items, _palette(len(all_items)))}
         history = []
         for _ in range(rounds + 1):
             tmp = out_path.with_suffix(".cal.docx")
@@ -875,7 +1314,7 @@ def _build_exact(pages, out_path, title, calibrate, rounds) -> dict:
             finally:
                 tmp.unlink(missing_ok=True)
             devs, worst = [], []
-            for pi, ps in enumerate(specs_by_page):
+            for pi, ps in enumerate(items_by_page):
                 if pi >= len(rendered):
                     continue
                 got = _measure(rendered[pi], ps, pal)
@@ -885,11 +1324,11 @@ def _build_exact(pages, out_path, title, calibrate, rounds) -> dict:
                     devs.append(d)
             history.append(round(float(max(devs)), 2) if devs else 0.0)
         # mỗi khối giữ trạng thái TỐT NHẤT đã đo (hiệu chỉnh không bao giờ làm khối nào tệ hơn ban đầu)
-        for pi, ps in enumerate(specs_by_page):
+        for pi, ps in enumerate(items_by_page):
             mm = PAGE_W_MM / sizes[pi][0]
             for s in ps:
                 if s.get("hist"):
-                    dev, s["fs"], s["dx"], s["dy"] = min(s["hist"], key=lambda h: h[0])
+                    dev, s["sx"], s["dx"], s["dy"] = min(s["hist"], key=lambda h: h[0])
                     worst.append((round(float(dev) * mm, 2), pi + 1, "".join(t for t, _ in s["segs"][0])[:30]))
         worst.sort(reverse=True)
         stats["calibration"] = {"soffice": True, "max_dev_mm_by_round": history,
@@ -939,6 +1378,23 @@ def _build_once(pages, out_path, title, colors, specs_by_page: list) -> dict:
         if not blocks:
             blocks = [{"category": "Picture", "bbox": [0, 0, W, H], "text": ""}]
             stats["whole_page_image"] += 1
+        elif colors is None:
+            boxes = [b["bbox"] for b in blocks if b.get("bbox") and len(b["bbox"]) == 4]
+            tboxes = [b["bbox"] for b in blocks if b.get("bbox") and len(b["bbox"]) == 4
+                      and (b.get("category") or "Text") not in IMAGE_CATEGORIES and (b.get("text") or "").strip()]
+            res = residual_layer(img, boxes, tboxes)
+            if res is not None:
+                rim, (rx, ry) = res
+                buf = io.BytesIO()
+                rim.save(buf, format="PNG", optimize=True)
+                buf.seek(0)
+                rid, _ = doc.part.get_or_add_image(buf)
+                ident += 1
+                graphic = _picture_graphic(rid, rim.width * k, rim.height * k, ident)
+                xml = _anchor(graphic, rx * k, ry * k, rim.width * k, rim.height * k, ident, z, "Nét ngoài khối",
+                              behind=True)
+                par._p.append(parse_xml(xml.replace("<w:r>", f"<w:r {ns}>", 1)))
+                stats["residual"] = stats.get("residual", 0) + 1
         for b in blocks:
             bbox = b.get("bbox")
             if not bbox or len(bbox) != 4:
@@ -960,16 +1416,24 @@ def _build_once(pages, out_path, title, colors, specs_by_page: list) -> dict:
                 stats["image"] += 1
                 xml = _anchor(graphic, x1 * k, y1 * k, (x2 - x1) * k, (y2 - y1) * k, ident, z, f"Ảnh {ident}")
             elif cat == "Table" or "<table" in text.lower():
-                m = re.search(r"<table.*?</table>", text, flags=re.S | re.I)
-                content = table_xml(m.group(0) if m else text, img, (x1, y1, x2, y2), scale_pt)
+                if reuse:
+                    spec = next(spec_iter)
+                else:
+                    m = re.search(r"<table.*?</table>", text, flags=re.S | re.I)
+                    spec = table_spec(img, (x1, y1, x2, y2), m.group(0) if m else text)
+                    specs.append(spec)
+                content = table_xml_spec(spec, scale_pt, colors)
                 stats["table"] += 1
-                xml = _anchor(_textbox_graphic((x2 - x1) * k, (y2 - y1) * k * 1.04, content),
-                              x1 * k, y1 * k, (x2 - x1) * k, (y2 - y1) * k * 1.04, ident, z, f"Bảng {ident}")
+                pt = spec.get("pad_top", 0.0)
+                xml = _anchor(_textbox_graphic((x2 - x1) * k, (y2 - y1 + pt) * k * 1.04, content),
+                              x1 * k, (y1 - pt) * k, (x2 - x1) * k, (y2 - y1 + pt) * k * 1.04, ident, z,
+                              f"Bảng {ident}")
             else:
                 if reuse:
                     spec = next(spec_iter)
                 else:
                     spec = text_spec(img, (x1, y1, x2, y2), text, cat)
+                    spec["kind"] = "text"
                     specs.append(spec)
                 spec.update(ident=ident, z=z)
                 stats["text"] += 1

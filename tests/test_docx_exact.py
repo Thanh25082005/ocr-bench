@@ -185,3 +185,96 @@ def test_identify_arabic_font_from_rendered_lines():
             lines.append((np.asarray(im) < 160, t))
         best, scores = AF.identify(lines, families=["Amiri", "Tajawal", "Noto Sans Arabic"])
         assert best == fam, scores
+
+
+# ------------------------------------------------------------------ tiếng Ả Rập: hướng, thứ tự, bảng, nét ngoài khối
+
+def test_paragraph_direction_follows_first_strong_char():
+    from ocrbench.docx_exact import para_rtl
+
+    assert para_rtl("الهاتف: +971 56 512 3883 contact@firm.co.uk")  # nhiều chữ Latin hơn nhưng bắt đầu bằng Ả Rập
+    assert not para_rtl("IBAN: SA39 7931 7540")
+    assert not para_rtl("12345")
+
+
+def test_bidi_candidates_and_directional_marks():
+    from ocrbench.arabic_bidi import LRE, PDF, apply, candidates
+
+    t = "على الرقم +٩٧٤ ٨١٨ ٦٧٤٣ أو البريد contact@firm.co.uk."
+    segs = [t[a:b] for a, b in candidates(t)]
+    assert segs == ["+٩٧٤ ٨١٨ ٦٧٤٣", "contact@firm.co.uk"]
+    assert candidates("الرقم: 24725") == []  # một cụm số liền: hướng không đổi được gì
+    out = apply(t, candidates(t)[:1])
+    assert out.count(LRE) == 1 and out.replace(LRE, "").replace(PDF, "") == t  # chỉ thêm dấu vô hình
+
+
+def test_rtl_indents_are_physical_and_run_order_follows_schema():
+    """Đoạn bidi: thụt lề mép phải ghi vào w:left (ECMA-376); rPr theo đúng thứ tự lược đồ (Word khắt khe)."""
+    from ocrbench.docx_exact import _para, _run
+
+    x = _para([[("مرحبا", False)]], 12, 14, True, "right", ind_left=0, ind_right=300)
+    assert '<w:ind w:left="300" w:right="0"/>' in x and '<w:jc w:val="start"/>' in x
+    r = _run("مرحبا", 11.3, bold=True, rtl=True, color="FF0000", sx=1.05)
+    order = [r.index(t) for t in ("<w:b/>", "<w:color", "<w:w ", "<w:sz ", "<w:szCs", "<w:rtl/>")]
+    assert order == sorted(order)
+    assert 'w:sz w:val="23"' in r  # cỡ chữ làm tròn 0,5 pt; phần chênh bù bằng w:w
+
+
+def test_ink_on_colored_band_is_the_text_not_the_band():
+    import numpy as np
+
+    from ocrbench.docx_exact import ink_colors, ink_rgb
+
+    a = np.full((60, 200, 3), 255, np.uint8)
+    a[10:50] = (68, 68, 68)  # hàng tiêu đề nền tối
+    a[25:35, 40:160] = (255, 255, 255)  # chữ trắng
+    m = ink_rgb(a)
+    assert m[25:35, 40:160].all() and not m[12:20, :].any()
+    from PIL import Image
+
+    color, fill = ink_colors(Image.fromarray(a[10:50]), (0, 0, 200, 40))
+    assert fill == "444444" and color == "FFFFFF"
+
+
+def test_rtl_table_first_logical_cell_is_rightmost():
+    """Bảng phải → trái: ô đầu tiên của dòng trong HTML nằm ở cột NGOÀI CÙNG BÊN PHẢI (bidiVisual)."""
+    from PIL import features
+
+    if not features.check("raqm"):
+        pytest.skip("cần Raqm")
+    from ocrbench.docx_exact import _font, table_spec, table_xml_spec
+
+    img = Image.new("RGB", (900, 200), "white")
+    d = ImageDraw.Draw(img)
+    f = _font(False, 28, True)
+    cells = [["الرقم", "الوصف الكامل للصنف", "الكمية"], ["1", "جهاز حاسوب محمول", "47"]]
+    xs_right = [880, 600, 180]  # cột logic 0 → bên phải
+    for r, row in enumerate(cells):
+        for c, t in enumerate(row):
+            d.text((xs_right[c], 40 + r * 80), t, font=f, fill="black", anchor="ra", direction="rtl", language="ar")
+    html = "<table>" + "".join("<tr>" + "".join(f"<td>{t}</td>" for t in row) + "</tr>" for row in cells) + "</table>"
+    sp = table_spec(img, (20, 20, 890, 180), html)
+    assert sp["rtl"]
+    first = next(c for c in sp["cells"] if c["r"] == 0 and c["c"] == 0)
+    assert first["box"][0] > 600 and first["ink"][2] > 860
+    assert "<w:bidiVisual/><w:tblW" in table_xml_spec(sp, 0.5)
+
+
+def test_residual_layer_keeps_rules_drops_cut_glyph_parts():
+    import numpy as np
+
+    from ocrbench.docx_exact import residual_layer
+
+    img = Image.new("RGB", (600, 300), "white")
+    d = ImageDraw.Draw(img)
+    for x in range(20, 580, 4):  # đường kẻ chấm dài, đi qua dưới một khối chữ
+        d.rectangle((x, 200, x + 1, 201), fill=(150, 150, 150))
+    d.rectangle((100, 80, 300, 120), fill="black")  # "chữ" trong khối
+    d.rectangle((301, 110, 306, 124), fill="black")  # đuôi chữ thò ra ngoài khung khối
+    box = (100, 80, 300, 205)  # khung khối phủ cả lên đường kẻ
+    rim, (rx, ry) = residual_layer(img, [box], [box])
+    alpha = np.zeros((300, 600), bool)
+    alpha[ry:ry + rim.height, rx:rx + rim.width] = np.asarray(rim)[..., 3] > 0
+    assert alpha[200:202, 150:250].any()  # đoạn kẻ dưới khung khối vẫn còn
+    assert alpha[200:202, 20:90].any() and alpha[200:202, 400:570].any()
+    assert not alpha[105:125, 300:310].any()  # đuôi chữ bị cắt không thành vệt thừa
