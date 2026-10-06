@@ -1239,10 +1239,31 @@ def residual_layer(img: Image.Image, boxes: list, text_boxes: list | None = None
                 i += 1
         return keep
 
+    def longest_run(v, gap=6):  # đoạn liền dài nhất, coi khe ≤ gap px là liền (đường kẻ chấm)
+        best = cur = last = 0
+        started = False
+        for i, x in enumerate(v):
+            if x:
+                cur = cur + (i - last) if started and i - last <= gap + 1 else 1
+                started, last = True, i
+                best = max(best, cur)
+        return best
+
+    def rule_mask(f, axis):  # hàng (cột) là đường kẻ: mảnh, tách biệt VÀ liền mạch ≥ 15% chiều dài trang
+        cov = f.mean(axis=1 - axis) if axis == 0 else f.mean(axis=0)
+        cand = thin_runs(cov, 0.15)
+        out = np.zeros(len(cov), bool)
+        n = f.shape[1] if axis == 0 else f.shape[0]
+        for i in np.nonzero(cand)[0]:
+            v = f[i, :] if axis == 0 else f[:, i]
+            if longest_run(v) >= 0.15 * n:  # mảnh chữ thẳng hàng (đầu dòng Ả Rập) cách nhau cả khoảng dòng → loại
+                out[i] = True
+        return out
+
     # đường kẻ mảnh chạy dài (kể cả kẻ chấm) giữ NGUYÊN, cả đoạn nằm dưới khung khối của model
     lines = np.zeros_like(m)
-    lines[thin_runs(full.mean(axis=1), 0.15), :] = True
-    lines[:, thin_runs(full.mean(axis=0), 0.15)] = True
+    lines[rule_mask(full, 0), :] = True
+    lines[:, rule_mask(full, 1)] = True
     m |= full & lines
     dens = np.asarray(Image.fromarray(m.astype(np.uint8) * 255).filter(ImageFilter.BoxBlur(2)))
     m &= dens >= 30  # ≥ 3 điểm mực trong ô 5×5
@@ -1253,7 +1274,7 @@ def residual_layer(img: Image.Image, boxes: list, text_boxes: list | None = None
             bh = by2 - by1
             tol = max(4.0, 0.3 * bh)  # đuôi chữ (g, y, nét tay) thò ra dưới / trên khung tới ~1/3 chiều cao khối
             touch = (x1 <= bx2 + tol and x2 >= bx1 - tol and y1 <= by2 + tol and y2 >= by1 - tol)
-            small = (y2 - y1) <= 0.8 * bh and (x2 - x1) <= 2.0 * bh
+            small = (y2 - y1) <= 1.3 * bh and (x2 - x1) <= 2.0 * bh  # mảnh chữ có thể cao bằng cả dòng
             if touch and small:
                 m[pts[:, 0], pts[:, 1]] = False
                 break

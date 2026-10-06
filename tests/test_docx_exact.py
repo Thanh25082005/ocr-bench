@@ -289,3 +289,26 @@ def test_embed_fonts_setting_in_schema_order():
     out = _settings_embed(xml).decode()
     assert out.index("zoom") < out.index("embedTrueTypeFonts") < out.index("defaultTabStop")
     assert _settings_embed(out.encode()).decode().count("embedTrueTypeFonts") == 1
+
+
+def test_residual_layer_ignores_aligned_glyph_slivers():
+    """Đầu chữ thẳng hàng ở mép phải các dòng Ả Rập (thò ra ngoài khung) không phải đường kẻ dọc."""
+    import numpy as np
+
+    from ocrbench.docx_exact import residual_layer
+
+    img = Image.new("RGB", (600, 800), "white")
+    d = ImageDraw.Draw(img)
+    boxes = []
+    for k in range(15):
+        y = 30 + k * 50
+        for x in range(100, 500, 7):  # dòng chữ (nét dọc cách nhau, như chữ thật — không phải khối đặc)
+            d.rectangle((x, y, x + 2, y + 24), fill="black")
+        d.rectangle((501, y + 2, 503, y + 22), fill="black")  # đầu chữ thò ra ngoài khung 2–3 px
+        boxes.append((100, y, 500, y + 24))
+    res = residual_layer(img, boxes, boxes)
+    if res is not None:
+        rim, (rx, ry) = res
+        alpha = np.zeros((800, 600), bool)
+        alpha[ry:ry + rim.height, rx:rx + rim.width] = np.asarray(rim)[..., 3] > 0
+        assert not alpha[:, 500:506].any()
