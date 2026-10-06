@@ -31,7 +31,8 @@ PAGE_W_MM = 210.0
 EMU_PER_MM = 36000
 EMU_PER_PT = 12700
 TWIP_PER_PT = 20
-FONT = "Liberation Sans"  # NHÚNG vào DOCX (SIL OFL) → đo = hiển thị trên mọi máy (cùng thông số Arial)
+FONT = "Arial"  # tên ghi vào DOCX: Word / Google Docs có sẵn; LibreOffice thay bằng Liberation Sans (cùng thông số)
+# → đo bằng Liberation Sans = hiển thị ở mọi nơi; không cần nhúng phông Latin
 FONT_AR = "Noto Sans Arabic"  # chữ Ả Rập (w:cs), cũng nhúng (SIL OFL)
 _FONT_FILES = ["/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
                "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
@@ -203,7 +204,7 @@ def ink_colors(img: Image.Image, box) -> tuple[str | None, str | None]:
     m = ink_rgb(a)
     rows = _bg_rows(a)
     bg = np.median(rows, axis=0)
-    fill = None if np.linalg.norm(bg - 255) < 40 else "".join(f"{int(v):02X}" for v in bg)
+    fill = None if np.linalg.norm(bg - 255) < 12 else "".join(f"{int(v):02X}" for v in bg)  # giữ cả nền xám nhạt
     color = None
     if m.sum() > 20:
         d = np.linalg.norm(a.astype(np.float32) - rows[:, None, :], axis=2)
@@ -793,7 +794,8 @@ def _cell_xml(cl: dict, size: float, scale_pt: float, w_px: float, color: str | 
     return xml
 
 
-def table_xml_spec(spec: dict, scale_pt: float, colors: dict | None = None) -> str:
+def table_xml_spec(spec: dict, scale_pt: float, colors: dict | None = None,
+                   float_at: tuple[float, float] | None = None) -> str:
     """Bảng (trong hộp chữ) từ kế hoạch: lưới cột cố định, dòng cao ĐÚNG như ảnh, mỗi ô đặt chữ theo mực gốc."""
     if not spec["cells"]:
         return _para([[(spec.get("empty", ""), False)]], 8, 9, False, "left")
@@ -808,7 +810,8 @@ def table_xml_spec(spec: dict, scale_pt: float, colors: dict | None = None) -> s
     tbl_borders = "".join(
         f'<w:{x} w:val="single" w:sz="{eighths}" w:space="0" w:color="{b["color"]}"/>' if b.get(x) else f'<w:{x} w:val="nil"/>'
         for x in ("top", "left", "bottom", "right", "insideH", "insideV"))
-    out = [f'<w:tbl><w:tblPr>{"<w:bidiVisual/>" if rtl else ""}<w:tblW w:w="{tw(sum(col_w))}" w:type="dxa"/>'
+    out = [f'<w:tbl><w:tblPr>{_tblp(*float_at, scale_pt) if float_at else ""}'
+           f'{"<w:bidiVisual/>" if rtl else ""}<w:tblW w:w="{tw(sum(col_w))}" w:type="dxa"/>'
            f'<w:tblBorders>{tbl_borders}</w:tblBorders><w:tblLayout w:type="fixed"/>'
            '<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/>'
            '<w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr>'
@@ -843,7 +846,8 @@ def table_xml_spec(spec: dict, scale_pt: float, colors: dict | None = None) -> s
             c_expect += 1
         out.append("</w:tr>")
     out.append("</w:tbl>")
-    out.append(_para([[("", False)]], 1, 1, False, "left"))  # Word cần một đoạn sau bảng trong hộp chữ
+    if not float_at:
+        out.append(_para([[("", False)]], 1, 1, False, "left"))  # Word cần một đoạn sau bảng trong hộp chữ
     return "".join(out)
 
 
@@ -864,8 +868,8 @@ def _embed_set() -> dict:
     """Phông nhúng cho tài liệu đang dựng: Liberation Sans + phông Ả Rập của tài liệu."""
     fam = ar_family()
     reg, bd = _ar_files(fam)
-    return {FONT: _EMBED[FONT], fam: (next((p for p in reg if Path(p).exists()), reg[0]),
-                                      next((p for p in bd if Path(p).exists()), bd[0]))}
+    return {fam: (next((p for p in reg if Path(p).exists()), reg[0]),
+                  next((p for p in bd if Path(p).exists()), bd[0]))}
 
 
 def _obfuscate(data: bytes, guid: str) -> bytes:
@@ -1017,6 +1021,34 @@ def text_spec(img, box, text: str, cat: str) -> dict:
             "ink_top": y1 + (bands[0][0] if bands else 0), "bidi_forced": bidi_forced, "color": color}
 
 
+_NIL_BORDERS = "".join(f'<w:{x} w:val="nil"/>' for x in ("top", "left", "bottom", "right", "insideH", "insideV"))
+_ZERO_MAR = ('<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/>'
+             '<w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar>')
+# đoạn rỗng tí hon ngăn cách các bảng nổi (hai bảng liền nhau sẽ bị gộp thành một) — cao 1 pt
+_SPACER = ('<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="20" w:lineRule="exact"/>'
+           '<w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:pPr></w:p>')
+
+
+def _tblp(x_px: float, y_px: float, scale_pt: float) -> str:
+    """Vị trí bảng nổi theo TRANG (twip, được âm). Google Docs (từ 2023), Word, LibreOffice đều giữ toạ độ này —
+    khác khung chữ (text box) mà Google Docs bỏ mất."""
+    t = lambda px: int(round(px * scale_pt * TWIP_PER_PT))  # noqa: E731
+    return (f'<w:tblpPr w:leftFromText="0" w:rightFromText="0" w:topFromText="0" w:bottomFromText="0" '
+            f'w:vertAnchor="page" w:horzAnchor="page" w:tblpX="{t(x_px)}" w:tblpY="{t(y_px)}"/>'
+            '<w:tblOverlap w:val="overlap"/>')
+
+
+def float_cell(x_px: float, y_px: float, w_px: float, h_px: float, content: str, scale_pt: float) -> str:
+    """Một khối = bảng nổi MỘT ô, không viền, lề ô 0, đặt đúng toạ độ trang."""
+    t = lambda px: int(round(max(0.0, px) * scale_pt * TWIP_PER_PT))  # noqa: E731
+    return (f'<w:tbl><w:tblPr>{_tblp(x_px, y_px, scale_pt)}<w:tblW w:w="{t(w_px)}" w:type="dxa"/>'
+            f'<w:tblBorders>{_NIL_BORDERS}</w:tblBorders><w:tblLayout w:type="fixed"/>{_ZERO_MAR}</w:tblPr>'
+            f'<w:tblGrid><w:gridCol w:w="{t(w_px)}"/></w:tblGrid>'
+            f'<w:tr><w:trPr><w:trHeight w:val="{t(h_px)}" w:hRule="atLeast"/></w:trPr>'
+            f'<w:tc><w:tcPr><w:tcW w:w="{t(w_px)}" w:type="dxa"/><w:vAlign w:val="top"/></w:tcPr>{content}</w:tc>'
+            '</w:tr></w:tbl>')
+
+
 def text_xml(spec: dict, k: float, scale_pt: float, color: str | None = None) -> str:
     x1, y1, x2, y2 = spec["box"]
     bw = x2 - x1
@@ -1039,9 +1071,7 @@ def text_xml(spec: dict, k: float, scale_pt: float, color: str | None = None) ->
                           natural * scale_pt, spec["justify"], color or spec.get("color"), spec.get("sx", 1.0))
     box_y = spec["ink_top"] - spec["top"] * size + spec["dy"]  # mép trên nét chữ dòng đầu trùng ảnh gốc
     box_h = (n - 1) * pitch + natural + 0.3 * size
-    box_w = (bw + 2 * margin) * k
-    return _anchor(_textbox_graphic(box_w, box_h * k, content), (x1 - margin + spec["dx"]) * k, box_y * k, box_w,
-                   box_h * k, spec["ident"], spec["z"], f"Khối {spec['ident']}")
+    return float_cell(x1 - margin + spec["dx"], box_y, bw + 2 * margin, box_h, content, scale_pt)
 
 
 # ------------------------------------------------------------------ hiệu chỉnh bằng LibreOffice
@@ -1204,7 +1234,7 @@ def _components(m: np.ndarray) -> list[tuple[int, int, int, int, np.ndarray]]:
     return out
 
 
-def residual_layer(img: Image.Image, boxes: list, text_boxes: list | None = None
+def residual_layer(img: Image.Image, boxes: list, text_boxes: list | None = None, table_boxes: list | None = None
                    ) -> tuple[Image.Image, tuple[int, int]] | None:
     """Nét mực NẰM NGOÀI mọi khối của model (đường gạch ký tên, kẻ chấm, khung, họa tiết, thứ model bỏ sót) → một
     ảnh trong suốt (RGBA) đặt dưới chữ, đúng toạ độ.
@@ -1265,6 +1295,8 @@ def residual_layer(img: Image.Image, boxes: list, text_boxes: list | None = None
     lines[rule_mask(full, 0), :] = True
     lines[:, rule_mask(full, 1)] = True
     m |= full & lines
+    for x1, y1, x2, y2 in table_boxes or []:  # viền bảng do bảng DOCX tự vẽ → không giữ đường kẻ gốc (kẻ đôi)
+        m[max(0, int(y1) - 3):min(H, int(y2) + 4), max(0, int(x1) - 3):min(W, int(x2) + 4)] = False
     dens = np.asarray(Image.fromarray(m.astype(np.uint8) * 255).filter(ImageFilter.BoxBlur(2)))
     m &= dens >= 30  # ≥ 3 điểm mực trong ô 5×5
     if m.sum() < 60:
@@ -1424,7 +1456,9 @@ def _build_once(pages, out_path, title, colors, specs_by_page: list) -> dict:
             boxes = [b["bbox"] for b in blocks if b.get("bbox") and len(b["bbox"]) == 4]
             tboxes = [b["bbox"] for b in blocks if b.get("bbox") and len(b["bbox"]) == 4
                       and (b.get("category") or "Text") not in IMAGE_CATEGORIES and (b.get("text") or "").strip()]
-            res = residual_layer(img, boxes, tboxes)
+            tables = [b["bbox"] for b in blocks if b.get("bbox") and len(b["bbox"]) == 4
+                      and ((b.get("category") or "") == "Table" or "<table" in (b.get("text") or "").lower())]
+            res = residual_layer(img, boxes, tboxes, tables)
             if res is not None:
                 rim, (rx, ry) = res
                 buf = io.BytesIO()
@@ -1464,12 +1498,9 @@ def _build_once(pages, out_path, title, colors, specs_by_page: list) -> dict:
                     m = re.search(r"<table.*?</table>", text, flags=re.S | re.I)
                     spec = table_spec(img, (x1, y1, x2, y2), m.group(0) if m else text)
                     specs.append(spec)
-                content = table_xml_spec(spec, scale_pt, colors)
                 stats["table"] += 1
                 pt = spec.get("pad_top", 0.0)
-                xml = _anchor(_textbox_graphic((x2 - x1) * k, (y2 - y1 + pt) * k * 1.04, content),
-                              x1 * k, (y1 - pt) * k, (x2 - x1) * k, (y2 - y1 + pt) * k * 1.04, ident, z,
-                              f"Bảng {ident}")
+                xml = table_xml_spec(spec, scale_pt, colors, float_at=(x1, y1 - pt))
             else:
                 if reuse:
                     spec = next(spec_iter)
@@ -1480,7 +1511,11 @@ def _build_once(pages, out_path, title, colors, specs_by_page: list) -> dict:
                 spec.update(ident=ident, z=z)
                 stats["text"] += 1
                 xml = text_xml(spec, k, scale_pt, color=colors.get(id(spec)) if colors else None)
-            par._p.append(parse_xml(xml.replace("<w:r>", f"<w:r {ns}>", 1)))
+            if xml.startswith("<w:tbl>"):  # bảng nổi: phần tử thân văn bản, trước đoạn neo của trang + đoạn ngăn
+                par._p.addprevious(parse_xml(xml.replace("<w:tbl>", f"<w:tbl {ns}>", 1)))
+                par._p.addprevious(parse_xml(_SPACER.replace("<w:p>", f"<w:p {ns}>", 1)))
+            else:
+                par._p.append(parse_xml(xml.replace("<w:r>", f"<w:r {ns}>", 1)))
         stats["pages"] += 1
     doc.save(out_path)
     stats["fonts"] = embed_fonts(out_path, _embed_set())

@@ -51,16 +51,23 @@ def test_build_positions_text_and_images(tmp_path):
         assert any(n.startswith("word/fonts/") and n.endswith(".odttf") for n in names)
         assert "embedTrueTypeFonts" in zipfile.ZipFile(out).read("word/settings.xml").decode()
     xml = zipfile.ZipFile(out).read("word/document.xml").decode()
-    assert xml.count("<wp:anchor") == 5 and xml.count('relativeFrom="page"') == 10  # mọi khung neo theo trang
+    # ảnh (logo + ảnh cả trang) neo theo trang; khối chữ + bảng = BẢNG NỔI theo trang (Google Docs giữ được,
+    # khác khung chữ text box mà Google Docs bỏ mất) — không còn khung chữ nào
+    assert xml.count("<wp:anchor") == 2 and xml.count('relativeFrom="page"') == 4
+    assert xml.count('w:vertAnchor="page" w:horzAnchor="page"') == 3 and "wps:wsp" not in xml
+    assert 'w:ascii="Arial"' in xml  # tên phông Latin có sẵn ở Word / Google Docs
     words = " ".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", xml))
     for w in ["INVOICE", "2041", "Customer:", "Al", "Noor", "Trading", "Laptop", "1,250.00", "Price"]:
         assert w in words  # không mất chữ
     assert "<w:b/>" in xml  # **đậm** và tiêu đề giữ in đậm
     # ô "Qty" (chữ ở x=610 px) phải thụt lề để không bị kéo về mép trái ô
     assert re.search(r'<w:ind w:left="[1-9]\d*" w:right="0"/>', xml)
-    # toạ độ: x=100 px trên ảnh rộng 1240 px ↔ 210 mm → 100/1240*210 mm = 16.94 mm = 609677 EMU
-    xs = [int(v) for v in re.findall(r'<wp:positionH relativeFrom="page"><wp:posOffset>(\d+)', xml)]
-    assert any(abs(x - 100 / 1240 * 210 * 36000) < 2 for x in xs)
+    # toạ độ: bảng ở x=100 px trên ảnh rộng 1240 px ↔ 210 mm → 16.94 mm = 960 twip
+    xs = [int(v) for v in re.findall(r'w:tblpX="(-?\d+)"', xml)]
+    assert any(abs(x - 100 / 1240 * 210 / 25.4 * 1440) <= 1 for x in xs)
+    # logo ở x=900 px → EMU
+    ps = [int(v) for v in re.findall(r'<wp:positionH relativeFrom="page"><wp:posOffset>(\d+)', xml)]
+    assert any(abs(x - 900 / 1240 * 210 * 36000) < 2 for x in ps)
     from docx import Document
 
     d = Document(out)
