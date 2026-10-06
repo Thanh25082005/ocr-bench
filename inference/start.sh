@@ -34,6 +34,20 @@ else
 fi
 "$PY" -c "import torch, transformers; print('   torch', torch.__version__, '| transformers', transformers.__version__, '| GPU', torch.cuda.device_count())"
 
+# LibreOffice: dựng thử DOCX "giữ nguyên bố cục" để tự hiệu chỉnh cỡ chữ / vị trí từng khối (cần cho tiếng Ả Rập).
+# Bản AppImage giải nén (không cần quyền root / FUSE), cài một lần ~300 MB. Bỏ qua: NO_LIBREOFFICE=1
+LO_DIR="${LO_DIR:-/kaggle/working/libreoffice}"
+if [ -z "${NO_LIBREOFFICE:-}" ] && ! command -v soffice >/dev/null 2>&1 && ! ls "$LO_DIR"/squashfs-root/opt/libreoffice*/program/soffice >/dev/null 2>&1; then
+  echo "== 1b. Cài LibreOffice (để hiệu chỉnh DOCX bố cục) vào $LO_DIR"
+  mkdir -p "$LO_DIR"
+  ( cd "$LO_DIR" && curl -fsSL -o lo.AppImage https://appimages.libreitalia.org/LibreOffice-still.basic-x86_64.AppImage \
+      && chmod +x lo.AppImage && ./lo.AppImage --appimage-extract >/dev/null && rm -f lo.AppImage ) \
+    || echo "   ⚠ Không cài được LibreOffice — DOCX bố cục vẫn tạo được nhưng KHÔNG hiệu chỉnh (tiếng Ả Rập lệch vài mm)"
+fi
+SOFFICE_BIN="$(ls "$LO_DIR"/squashfs-root/opt/libreoffice*/program/soffice 2>/dev/null | tail -1 || true)"
+if [ -n "$SOFFICE_BIN" ]; then export OCRBENCH_SOFFICE="$SOFFICE_BIN"; fi
+"$PY" -c "from ocrbench.docx_exact import find_soffice; s = find_soffice(); print('   LibreOffice (hiệu chỉnh DOCX bố cục):', s or 'KHÔNG CÓ')"
+
 if [ -z "${SKIP_CHECK:-}" ]; then
   echo "== 2. Tự kiểm tra: dots đọc một trang mẫu (lần đầu tải model ~6 GB)"
   "$PY" inference/check.py --gpus "$GPUS"

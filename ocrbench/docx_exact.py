@@ -161,13 +161,14 @@ def _esc(s: str) -> str:
     return _html.escape(s, quote=False)
 
 
-def _run(text: str, size_pt: float, bold=False, rtl=False) -> str:
+def _run(text: str, size_pt: float, bold=False, rtl=False, color: str | None = None) -> str:
     sz = max(2, int(round(size_pt * 2)))
     # đoạn tiếng Ả Rập: MỘT phông cho cả đoạn (kể cả số, chữ Latin) — trộn phông thì mỗi chương trình chia chiều cao
     # dòng theo phông khác nhau (LibreOffice lấy tỉ lệ của phông Latin) → nét chữ lệch dọc
     fa = FONT_AR if rtl else FONT
     rpr = (f'<w:rPr><w:rFonts w:ascii="{fa}" w:hAnsi="{fa}" w:cs="{FONT_AR}" w:eastAsia="{fa}"/>'
-           f'{"<w:b/><w:bCs/>" if bold else ""}{"<w:rtl/>" if rtl else ""}'
+           f'{"<w:b/><w:bCs/>" if bold else ""}{f"<w:color w:val={chr(34)}{color}{chr(34)}/>" if color else ""}'
+           f'{"<w:rtl/>" if rtl else ""}'
            f'<w:sz w:val="{sz}"/><w:szCs w:val="{sz}"/></w:rPr>')
     return f'<w:r>{rpr}<w:t xml:space="preserve">{_esc(text)}</w:t></w:r>'
 
@@ -177,7 +178,7 @@ def _br(size_pt: float) -> str:
 
 
 def _para(lines: list[list[tuple[str, bool]]], size_pt: float, line_pt: float, rtl: bool, align: str,
-          ind_left: int = 0, ind_right: int = 0) -> str:
+          ind_left: int = 0, ind_right: int = 0, color: str | None = None) -> str:
     """Một đoạn; mỗi dòng là danh sách (chữ, đậm); giữa các dòng chèn ngắt dòng cứng. ind_*: thụt lề (twip)."""
     jc = align  # đoạn bidi ("distribute": căn đều kể cả dòng cuối): "start" = phải, "end" = trái (LibreOffice hiểu "right" của đoạn bidi thành trái)
     if rtl and align == "right":
@@ -191,7 +192,7 @@ def _para(lines: list[list[tuple[str, bool]]], size_pt: float, line_pt: float, r
     for i, line in enumerate(lines):
         if i:
             body.append(_br(size_pt))
-        body += [_run(t, size_pt, b, rtl) for t, b in line if t]
+        body += [_run(t, size_pt, b, rtl, color) for t, b in line if t]
     return f"<w:p>{ppr}{''.join(body)}</w:p>"
 
 
@@ -204,7 +205,8 @@ def font_metrics(text: str, bold: bool = False) -> tuple[float, float, float]:
 
 
 def _line_paras(lines: list[list[tuple[str, bool]]], size_pt: float, pitch_pt: float, rtl: bool, align: str,
-                ind_left: int = 0, ind_right: int = 0, natural_pt: float | None = None, justify: bool = False) -> str:
+                ind_left: int = 0, ind_right: int = 0, natural_pt: float | None = None, justify: bool = False,
+                color: str | None = None) -> str:
     """Mỗi dòng một đoạn, chiều cao dòng = chiều cao TỰ NHIÊN của phông (không có phần thừa để chương trình chia
     lên/xuống), khoảng cách dòng tạo bằng spacing-before → vị trí nét chữ như nhau trên Word, LibreOffice."""
     nat = natural_pt or size_pt * 1.117
@@ -214,7 +216,7 @@ def _line_paras(lines: list[list[tuple[str, bool]]], size_pt: float, pitch_pt: f
         # đoạn căn đều: mọi dòng trừ dòng cuối giãn đủ bề rộng ("distribute" = căn đều cả dòng đơn)
         a = "distribute" if justify and i < len(lines) - 1 else align
         h = nat if (i == 0 or gap >= 0) else pitch_pt  # dòng gốc sát hơn chiều cao tự nhiên → dùng đúng khoảng gốc
-        para = _para([line], size_pt, h, rtl, a, ind_left, ind_right)
+        para = _para([line], size_pt, h, rtl, a, ind_left, ind_right, color)
         if i and gap > 0:
             para = para.replace('w:before="0"', f'w:before="{int(round(gap * TWIP_PER_PT))}"', 1)
         out.append(para)
@@ -566,10 +568,255 @@ def embed_fonts(docx_path, fonts: dict | None = None) -> list[str]:
     return done
 
 
+# ------------------------------------------------------------------ khối chữ: kế hoạch + XML
+
+def text_spec(img, box, text: str, cat: str) -> dict:
+    """Mọi thông số đặt một khối chữ (đơn vị px ảnh). Hiệu chỉnh chỉ sửa fs (hệ số cỡ chữ), dx, dy."""
+    x1, y1, x2, y2 = box
+    original = plain_text(text)
+    bold = cat in HEADING_CATEGORIES
+    rtl = bool(_ARABIC.search(original)) and is_rtl(original)
+    bands = text_bands(img, box)
+    n = len(bands) or 1
+    pitch = (bands[-1][0] - bands[0][0]) / (n - 1) if n > 1 else None
+    ext = _ink_extent_x(img, box)
+    band_h = float(np.median([b1 - b0 for b0, b1 in bands])) if bands else (y2 - y1) * 0.7
+    size0 = size_from_ink(original, bold, band_h, (ext[1] - ext[0]) if ext else None, n)
+    if n > 1 and bands and ext:  # nhiều dòng: theo tổng chiều dài chữ (dòng cuối đo trên ảnh)
+        last = _ink_extent_x(img, (x1, y1 + bands[-1][0], x2, y1 + bands[-1][1]))
+        if last:
+            s_len = size_from_length(original, bold, ext[1] - ext[0], n, last[1] - last[0])
+            size_h = band_h / ink_ratio(original.replace("**", ""), bold)
+            size0 = min(max(s_len, 0.6 * size_h), 1.6 * size_h)
+    bw = x2 - x1
+    lg, rg = (ext[0], bw - ext[1]) if ext else (0.0, 0.0)
+    centered = bool(ext and lg > 0.06 * bw and rg > 0.06 * bw and abs(lg - rg) < 0.3 * max(lg, rg))
+    if centered:
+        align, box_w = "center", bw
+    elif ext and (rg <= lg + 0.02 * bw if rtl else rg < lg - 0.02 * bw):
+        # chữ dồn phải; chữ phủ kín bề ngang → theo hướng viết (Ả Rập: phải, Latin: trái)
+        align, box_w = ("start" if rtl else "right"), bw - rg
+    else:
+        align, box_w = ("end" if rtl else "left"), bw - lg
+    size, spacing, lines = fit_text(original, box_w, y2 - y1, n, pitch, bold, size0)
+    if rtl:
+        segs = [[(t.replace("**", ""), bold)] for t in lines]
+    else:
+        segs = _reapply_bold(original if not bold else original.replace("**", ""), lines)
+        if bold:
+            segs = [[(t, True) for t, _ in line] for line in segs]
+    first = "".join(t for t, _ in segs[0]) if segs else original
+    asc, desc, top = font_metrics(first, bold)
+    justify = False
+    if n > 1 and len(lines) == n and bands and not centered:
+        edges = [_ink_extent_x(img, (x1, y1 + b0, x2, y1 + b1)) for b0, b1 in bands[:-1]]
+        if all(edges):
+            full = [e[1] for e in edges] if not rtl else [e[0] for e in edges]
+            ref = max(full) if not rtl else min(full)
+            justify = all(abs(v - ref) < 0.012 * bw for v in full)
+    ink = None  # hộp mực gốc (toạ độ trang) — đích để hiệu chỉnh
+    if ext and bands:
+        ink = (x1 + ext[0], y1 + bands[0][0], x1 + ext[1], y1 + bands[-1][1])
+    return {"box": (x1, y1, x2, y2), "segs": segs, "size": size, "em": asc + desc, "top": top, "n_src": n,
+            "pitch": pitch if (pitch and len(lines) == n) else None, "spacing": spacing, "align": align, "rtl": rtl,
+            "justify": justify, "lg": lg, "rg": rg, "ink": ink, "fs": 1.0, "dx": 0.0, "dy": 0.0,
+            "ink_top": y1 + (bands[0][0] if bands else 0)}
+
+
+def text_xml(spec: dict, k: float, scale_pt: float, color: str | None = None) -> str:
+    x1, y1, x2, y2 = spec["box"]
+    bw = x2 - x1
+    size = spec["size"] * spec["fs"]
+    natural = spec["em"] * size
+    n = len(spec["segs"])
+    pitch = spec["pitch"] or max(spec["spacing"] * spec["fs"], natural)
+    margin = 0.04 * bw  # khung rộng thêm hai bên: chữ hơi rộng hơn dự đoán cũng không bị khung cắt / ngắt dòng
+    tw = lambda px: int(round(max(0.0, px) * scale_pt * TWIP_PER_PT))  # noqa: E731
+    al = spec["align"]
+    if al == "center":
+        il = ir = 0
+    elif spec["justify"]:  # căn đều: giãn đúng tới hai mép GỐC (không nới), nếu không dòng bị kéo quá mép phải
+        il, ir = tw(spec["lg"] + margin), tw(spec["rg"] + margin)
+    elif al in ("right", "start"):  # lề an toàn ở phía KHÔNG căn
+        il, ir = 0, tw(spec["rg"] + margin)
+    else:
+        il, ir = tw(spec["lg"] + margin), 0
+    content = _line_paras(spec["segs"], size * scale_pt, pitch * scale_pt, spec["rtl"], al, il, ir,
+                          natural * scale_pt, spec["justify"], color)
+    box_y = spec["ink_top"] - spec["top"] * size + spec["dy"]  # mép trên nét chữ dòng đầu trùng ảnh gốc
+    box_h = (n - 1) * pitch + natural + 0.3 * size
+    box_w = (bw + 2 * margin) * k
+    return _anchor(_textbox_graphic(box_w, box_h * k, content), (x1 - margin + spec["dx"]) * k, box_y * k, box_w,
+                   box_h * k, spec["ident"], spec["z"], f"Khối {spec['ident']}")
+
+
+# ------------------------------------------------------------------ hiệu chỉnh bằng LibreOffice
+
+def find_soffice(hint: str | None = None) -> str | None:
+    """LibreOffice để dựng thử: tham số, biến OCRBENCH_SOFFICE, PATH, hoặc bản AppImage đã giải nén."""
+    import glob
+    import os
+    import shutil
+
+    for c in (hint, os.environ.get("OCRBENCH_SOFFICE"), shutil.which("soffice"), shutil.which("libreoffice")):
+        if c and c != "auto" and Path(c).exists():
+            return c
+    for pat in ("/kaggle/working/libreoffice/squashfs-root/opt/libreoffice*/program/soffice",
+                "/opt/libreoffice*/program/soffice"):
+        hits = sorted(glob.glob(pat))
+        if hits:
+            return hits[-1]
+    return None
+
+
+def _palette(n: int) -> list[tuple[str, float]]:
+    """n màu bão hoà, sắc độ cách xa nhau (tỉ lệ vàng) → (hex, sắc độ 0..1)."""
+    import colorsys
+
+    out = []
+    for i in range(n):
+        h = (i * 0.61803398875) % 1.0
+        r, g, b = colorsys.hsv_to_rgb(h, 1.0, 0.72)
+        out.append((f"{int(r * 255):02X}{int(g * 255):02X}{int(b * 255):02X}", h))
+    return out
+
+
+def _render_pages(soffice: str, docx: Path, sizes: list[tuple[int, int]]) -> list[np.ndarray]:
+    import os
+    import subprocess
+    import tempfile
+
+    import pypdfium2 as pdfium
+
+    import shutil
+
+    outdir = Path(tempfile.mkdtemp(prefix="exact_cal_"))  # hồ sơ LibreOffice riêng → chạy song song không đụng nhau
+    try:
+        subprocess.run([soffice, f"-env:UserInstallation=file://{outdir}/lo_profile", "--headless", "--convert-to",
+                        "pdf", "--outdir", str(outdir), str(docx)], check=True, capture_output=True, timeout=300,
+                       env={**os.environ, "HOME": str(outdir)})
+        pdf = pdfium.PdfDocument(str(outdir / (docx.stem + ".pdf")))
+        pages = []
+        for i, (w, h) in enumerate(sizes):
+            if i >= len(pdf):
+                break
+            pw, _ = pdf[i].get_size()
+            im = pdf[i].render(scale=w / pw).to_pil().convert("RGB").resize((w, h))
+            pages.append(np.asarray(im))
+        pdf.close()
+        return pages
+    finally:
+        shutil.rmtree(outdir, ignore_errors=True)
+
+
+def _measure(rgb: np.ndarray, specs: list[dict], pal: dict) -> dict:
+    """Hộp mực đã dựng của từng khối, nhận theo MÀU riêng của khối (không lẫn khối bên cạnh)."""
+    a = rgb.astype(np.float32) / 255.0
+    mx, mn = a.max(axis=2), a.min(axis=2)
+    sat = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-6), 0)
+    ink = (sat > 0.35) & (mn < 0.85)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    d = np.maximum(mx - mn, 1e-6)
+    hue = np.where(mx == r, ((g - b) / d) % 6, np.where(mx == g, (b - r) / d + 2, (r - g) / d + 4)) / 6.0
+    out = {}
+    H, W = ink.shape
+    for s in specs:
+        _, h0 = pal[id(s)]
+        x1, y1, x2, y2 = s["box"]
+        pad_x, pad_y = 0.06 * (x2 - x1) + 12, 0.35 * (y2 - y1) + 8  # vừa đủ cho lệch, không trùm sang dòng khác
+        X1, Y1 = int(max(0, x1 - pad_x)), int(max(0, y1 - pad_y))
+        X2, Y2 = int(min(W, x2 + pad_x)), int(min(H, y2 + pad_y))
+        dh = np.abs(hue[Y1:Y2, X1:X2] - h0)
+        dh = np.minimum(dh, 1 - dh)
+        m = ink[Y1:Y2, X1:X2] & (dh < 0.02)
+        ys, xs = np.nonzero(m)
+        if len(xs) > 5:
+            out[id(s)] = (X1 + xs.min(), Y1 + ys.min(), X1 + xs.max() + 1, Y1 + ys.max() + 1)
+    return out
+
+
+def _correct(s: dict, got, apply: bool = True) -> float:
+    """Ghi độ lệch của trạng thái hiện tại (fs, dx, dy) vào lịch sử, rồi (nếu apply) sửa theo hộp mực đã dựng.
+    → độ lệch lớn nhất (px) của trạng thái trước khi sửa."""
+    o = s["ink"]
+    if not o or not got:
+        return 0.0
+    dev = max(abs(o[i] - got[i]) for i in range(4))
+    s.setdefault("hist", []).append((dev, s["fs"], s["dx"], s["dy"]))
+    if not apply:
+        return dev
+    ow, gw = o[2] - o[0], got[2] - got[0]
+    if gw > 4 and not s["justify"]:
+        ratio = min(1.4, max(0.7, ow / gw))
+        if abs(ratio - 1) > 0.004:
+            s["fs"] *= ratio
+    al = s["align"]
+    if al == "center":
+        s["dx"] += (o[0] + o[2]) / 2 - (got[0] + got[2]) / 2
+    elif al in ("right", "start"):
+        s["dx"] += o[2] - got[2]
+    else:
+        s["dx"] += o[0] - got[0]
+    s["dy"] += o[1] - got[1]
+    return dev
+
+
 # ------------------------------------------------------------------ dựng tài liệu
 
-def build_exact_docx(pages: list[tuple[Image.Image, list[dict]]], out_path, title: str | None = None) -> dict:
-    """pages: [(ảnh trang, [khối {category, bbox, text}])] → ghi DOCX; trả về thống kê."""
+def build_exact_docx(pages: list[tuple[Image.Image, list[dict]]], out_path, title: str | None = None,
+                     calibrate: str | bool | None = "auto", rounds: int = 2) -> dict:
+    """pages: [(ảnh trang, [khối {category, bbox, text}])] → ghi DOCX; trả về thống kê.
+
+    calibrate: "auto" = có LibreOffice thì hiệu chỉnh (dựng thử, đo từng khối theo màu riêng, sửa cỡ chữ + vị trí,
+    lặp `rounds` vòng); None/False = không; đường dẫn soffice = dùng bản đó."""
+    out_path = Path(out_path)
+    soffice = find_soffice(calibrate if isinstance(calibrate, str) else None) if calibrate else None
+    specs_by_page: list[list[dict]] = []
+    stats = _build_once(pages, out_path, title, None, specs_by_page)
+    if soffice and any(specs_by_page):
+        sizes = [im.size for im, _ in pages]
+        all_specs = [s for ps in specs_by_page for s in ps]
+        pal = {id(s): c for s, c in zip(all_specs, _palette(len(all_specs)))}
+        history = []
+        for _ in range(rounds + 1):
+            tmp = out_path.with_suffix(".cal.docx")
+            _build_once(pages, tmp, title, {k: v[0] for k, v in pal.items()}, specs_by_page)
+            try:
+                rendered = _render_pages(soffice, tmp, sizes)
+            except Exception as e:  # không dựng thử được → giữ bản chưa hiệu chỉnh
+                stats["calibration"] = f"lỗi: {type(e).__name__}: {e}"[:200]
+                break
+            finally:
+                tmp.unlink(missing_ok=True)
+            devs, worst = [], []
+            for pi, ps in enumerate(specs_by_page):
+                if pi >= len(rendered):
+                    continue
+                got = _measure(rendered[pi], ps, pal)
+                mm = PAGE_W_MM / sizes[pi][0]
+                for s in ps:
+                    d = _correct(s, got.get(id(s)), apply=len(history) < rounds) * mm
+                    devs.append(d)
+            history.append(round(float(max(devs)), 2) if devs else 0.0)
+        # mỗi khối giữ trạng thái TỐT NHẤT đã đo (hiệu chỉnh không bao giờ làm khối nào tệ hơn ban đầu)
+        for pi, ps in enumerate(specs_by_page):
+            mm = PAGE_W_MM / sizes[pi][0]
+            for s in ps:
+                if s.get("hist"):
+                    dev, s["fs"], s["dx"], s["dy"] = min(s["hist"], key=lambda h: h[0])
+                    worst.append((round(float(dev) * mm, 2), pi + 1, "".join(t for t, _ in s["segs"][0])[:30]))
+        worst.sort(reverse=True)
+        stats["calibration"] = {"soffice": True, "max_dev_mm_by_round": history,
+                                "max_dev_mm_final": worst[0][0] if worst else 0.0, "worst": worst[:3]}
+        stats.update({k: v for k, v in _build_once(pages, out_path, title, None, specs_by_page).items()
+                      if k != "calibration"})
+    elif calibrate:
+        stats["calibration"] = "không có LibreOffice — chưa hiệu chỉnh"
+    return stats
+
+
+def _build_once(pages, out_path, title, colors, specs_by_page: list) -> dict:
+    """Dựng DOCX một lần. specs_by_page rỗng → lập kế hoạch khối chữ; có sẵn → dùng lại (đã hiệu chỉnh)."""
     from docx import Document
     from docx.enum.section import WD_SECTION
     from docx.oxml import parse_xml
@@ -582,6 +829,7 @@ def build_exact_docx(pages: list[tuple[Image.Image, list[dict]]], out_path, titl
     ns = nsdecls("w", "wp", "a", "r", "pic") + ' xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"'
     stats = {"pages": 0, "text": 0, "table": 0, "image": 0, "whole_page_image": 0}
     ident = 1
+    reuse = bool(specs_by_page)
     body_par = doc.paragraphs[0] if doc.paragraphs else doc.add_paragraph()
     for pi, (img, blocks) in enumerate(pages):
         img = img.convert("RGB")
@@ -596,6 +844,12 @@ def build_exact_docx(pages: list[tuple[Image.Image, list[dict]]], out_path, titl
             setattr(section, attr, Emu(0))
         par = body_par if pi == 0 else doc.add_paragraph()
         z = 251658240
+        if reuse:
+            specs = specs_by_page[pi]
+            spec_iter = iter(specs)
+        else:
+            specs = []
+            specs_by_page.append(specs)
         if not blocks:
             blocks = [{"category": "Picture", "bbox": [0, 0, W, H], "text": ""}]
             stats["whole_page_image"] += 1
@@ -626,73 +880,14 @@ def build_exact_docx(pages: list[tuple[Image.Image, list[dict]]], out_path, titl
                 xml = _anchor(_textbox_graphic((x2 - x1) * k, (y2 - y1) * k * 1.04, content),
                               x1 * k, y1 * k, (x2 - x1) * k, (y2 - y1) * k * 1.04, ident, z, f"Bảng {ident}")
             else:
-                original = plain_text(text)
-                bold = cat in HEADING_CATEGORIES
-                rtl = bool(_ARABIC.search(original)) and is_rtl(original)
-                bands = text_bands(img, (x1, y1, x2, y2))
-                n = len(bands) or 1
-                pitch = (bands[-1][0] - bands[0][0]) / (n - 1) if n > 1 else None
-                ext = _ink_extent_x(img, (x1, y1, x2, y2))
-                band_h = float(np.median([b1 - b0 for b0, b1 in bands])) if bands else (y2 - y1) * 0.7
-                size0 = size_from_ink(original, bold, band_h, (ext[1] - ext[0]) if ext else None, n)
-                if n > 1 and bands and ext:  # nhiều dòng: theo tổng chiều dài chữ (dòng cuối đo trên ảnh)
-                    last = _ink_extent_x(img, (x1, y1 + bands[-1][0], x2, y1 + bands[-1][1]))
-                    if last:
-                        s_len = size_from_length(original, bold, ext[1] - ext[0], n, last[1] - last[0])
-                        size_h = band_h / ink_ratio(original.replace("**", ""), bold)
-                        size0 = min(max(s_len, 0.6 * size_h), 1.6 * size_h)
-                box_w = (x2 - x1) * 1.0
-                # kiểu căn đo trên ảnh: khoảng trống trái / phải của mực trong khối
-                bw_px = x2 - x1
-                lg, rg = (ext[0], bw_px - ext[1]) if ext else (0.0, 0.0)
-                centered = ext and lg > 0.06 * bw_px and rg > 0.06 * bw_px and abs(lg - rg) < 0.3 * max(lg, rg)
-                ind_l = ind_r = 0
-                if centered:
-                    align = "center"
-                elif ext and rg < lg:  # chữ dồn phải
-                    align, ind_r = ("start" if rtl else "right"), int(round(max(0.0, rg) * scale_pt * TWIP_PER_PT))
-                    box_w = (x2 - x1) - rg
+                if reuse:
+                    spec = next(spec_iter)
                 else:
-                    align, ind_l = ("end" if rtl else "left"), int(round(max(0.0, lg) * scale_pt * TWIP_PER_PT))
-                    box_w = (x2 - x1) - lg
-                size, spacing, lines = fit_text(original, box_w, y2 - y1, n, pitch, bold, size0)
-                if rtl:  # chữ Ả Rập: ngắt dòng đã đo bằng phông Ả Rập + ghép nét; căn đầu dòng (= phải)
-                    segs = [[(t.replace("**", ""), bold)] for t in lines]
-                else:
-                    segs = _reapply_bold(original if not bold else original.replace("**", ""), lines)
-                    if bold:
-                        segs = [[(t, True) for t, _ in line] for line in segs]
-                # khoảng cách dòng = đúng khoảng cách đo trên ảnh (nếu số dòng khớp), dòng cao tự nhiên theo phông
-                first = "".join(t for t, _ in segs[0]) if segs else original
-                asc, desc, top = font_metrics(first, bold)
-                natural = (asc + desc) * size
-                pitch_px = pitch if (pitch and len(lines) == n) else max(spacing, natural)
-                justify = False
-                if n > 1 and len(lines) == n and bands and not centered:
-                    edges = [_ink_extent_x(img, (x1, y1 + b0, x2, y1 + b1)) for b0, b1 in bands[:-1]]
-                    if all(edges):
-                        full = [e[1] for e in edges] if not rtl else [e[0] for e in edges]
-                        ref = max(full) if not rtl else min(full)
-                        justify = all(abs(v - ref) < 0.012 * bw_px for v in full)
-                margin = 0.04 * bw_px  # khung rộng thêm hai bên: chữ hơi rộng hơn dự đoán cũng không bị khung cắt
-                m_tw = int(round(margin * scale_pt * TWIP_PER_PT))
-                # lề an toàn nằm ở phía KHÔNG căn → chữ hơi rộng hơn dự đoán cũng không bị ngắt dòng, đầu dòng giữ nguyên
-                if centered:
-                    il, ir = 0, 0
-                elif ind_r or align in ("right", "start"):
-                    il, ir = 0, ind_r + m_tw
-                else:
-                    il, ir = ind_l + m_tw, 0
-                content = _line_paras(segs, size * scale_pt, pitch_px * scale_pt, rtl, align, il, ir,
-                                      natural * scale_pt, justify)
-                # đặt khung sao cho mép trên nét chữ dòng đầu trùng ảnh gốc
-                ink_top = y1 + (bands[0][0] if bands else 0)
-                box_y = ink_top - top * size
-                box_h = (len(lines) - 1) * pitch_px + natural + 0.3 * size
+                    spec = text_spec(img, (x1, y1, x2, y2), text, cat)
+                    specs.append(spec)
+                spec.update(ident=ident, z=z)
                 stats["text"] += 1
-                box_wk = (x2 - x1 + 2 * margin) * k
-                xml = _anchor(_textbox_graphic(box_wk, box_h * k, content),
-                              (x1 - margin) * k, box_y * k, box_wk, box_h * k, ident, z, f"Khối {ident}")
+                xml = text_xml(spec, k, scale_pt, color=colors.get(id(spec)) if colors else None)
             par._p.append(parse_xml(xml.replace("<w:r>", f"<w:r {ns}>", 1)))
         stats["pages"] += 1
     doc.save(out_path)

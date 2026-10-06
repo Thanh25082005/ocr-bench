@@ -42,7 +42,7 @@ def _page():
 def test_build_positions_text_and_images(tmp_path):
     img, blocks = _page()
     out = tmp_path / "x.docx"
-    st = build_exact_docx([(img, blocks), (img, [])], out, title="t")
+    st = build_exact_docx([(img, blocks), (img, [])], out, title="t", calibrate=None)
     fonts = st.pop("fonts")
     assert st == {"pages": 2, "text": 2, "table": 1, "image": 2, "whole_page_image": 1}
     names = zipfile.ZipFile(out).namelist()
@@ -116,3 +116,35 @@ def test_exact_skipped_without_block_text(tmp_path):
     Image.new("RGB", (300, 300), "white").save(tmp_path / "a.png")
     res = Converter(tmp_path / "c.yaml", "fake").convert_file(tmp_path / "a.png", tmp_path / "o")
     assert res.docx.exists() and res.docx_exact is None
+
+
+def test_measure_by_color_ignores_neighbours():
+    """Hiệu chỉnh đo từng khối theo màu riêng: nét đen / khối màu khác nằm sát bên không bị tính vào."""
+    import numpy as np
+
+    from ocrbench.docx_exact import _measure, _palette
+
+    pal = _palette(2)
+    rgb = np.full((200, 400, 3), 255, np.uint8)
+    c0 = [int(pal[0][0][i:i + 2], 16) for i in (0, 2, 4)]
+    c1 = [int(pal[1][0][i:i + 2], 16) for i in (0, 2, 4)]
+    rgb[50:70, 100:300] = c0
+    rgb[72:90, 60:350] = c1  # khối bên dưới, sát và rộng hơn
+    rgb[40:48, 20:380] = 0  # nét đen (bảng / ảnh)
+    s0, s1 = {"box": (100, 50, 300, 70)}, {"box": (60, 72, 350, 90)}
+    got = _measure(rgb, [s0, s1], {id(s0): pal[0], id(s1): pal[1]})
+    assert got[id(s0)] == (100, 50, 300, 70) and got[id(s1)] == (60, 72, 350, 90)
+
+
+def test_calibration_with_libreoffice(tmp_path):
+    """Có LibreOffice: dựng thử → đo → sửa; khối chữ không lệch quá 2 mm so với ảnh gốc."""
+    from ocrbench.docx_exact import find_soffice
+
+    soffice = find_soffice()
+    if not soffice:
+        pytest.skip("không có LibreOffice")
+    img, blocks = _page()
+    st = build_exact_docx([(img, blocks)], tmp_path / "c.docx", calibrate=soffice)
+    cal = st["calibration"]
+    assert cal["soffice"] and cal["max_dev_mm_final"] <= 2.0, cal
+    assert not list(tmp_path.glob("*.cal.docx"))  # bản dựng thử đã xoá
