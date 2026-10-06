@@ -44,6 +44,8 @@ if [ -z "${NO_LIBREOFFICE:-}" ] && ! command -v soffice >/dev/null 2>&1 && ! ls 
       && chmod +x lo.AppImage && ./lo.AppImage --appimage-extract >/dev/null && rm -f lo.AppImage ) \
     || echo "   ⚠ Không cài được LibreOffice — DOCX bố cục vẫn tạo được nhưng KHÔNG hiệu chỉnh (tiếng Ả Rập lệch vài mm)"
 fi
+# Thư viện 21 phông Ả Rập mở (OFL, ~13 MB, tải một lần) — nhận dạng phông của tài liệu cho DOCX bố cục
+"$PY" -m ocrbench.arabic_fonts | head -1 || echo "   ⚠ Không tải được phông Ả Rập — DOCX bố cục dùng phông mặc định"
 SOFFICE_BIN="$(ls "$LO_DIR"/squashfs-root/opt/libreoffice*/program/soffice 2>/dev/null | tail -1 || true)"
 if [ -n "$SOFFICE_BIN" ]; then export OCRBENCH_SOFFICE="$SOFFICE_BIN"; fi
 "$PY" -c "from ocrbench.docx_exact import find_soffice; s = find_soffice(); print('   LibreOffice (hiệu chỉnh DOCX bố cục):', s or 'KHÔNG CÓ')"

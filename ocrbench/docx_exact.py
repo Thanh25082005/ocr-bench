@@ -18,6 +18,7 @@ from __future__ import annotations
 import html as _html
 import io
 import re
+from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
 
@@ -50,10 +51,32 @@ _FONT_AR_BOLD = ["/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf",
                  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "C:/Windows/Fonts/arialbd.ttf"]
 
 
+# phông Ả Rập của tài liệu đang dựng (nhận dạng từ ảnh — ocrbench.arabic_fonts); None = FONT_AR mặc định
+_AR_FAMILY: ContextVar[str | None] = ContextVar("ar_family", default=None)
+
+
+def ar_family() -> str:
+    return _AR_FAMILY.get() or FONT_AR
+
+
+def _ar_files(family: str) -> tuple[list[str], list[str]]:
+    from .arabic_fonts import font_files
+
+    ff = font_files(family) if family != FONT_AR or not Path(_FONT_AR[0]).exists() else None
+    if ff:
+        return [str(ff[0])], [str(ff[1] or ff[0])]
+    return _FONT_AR, _FONT_AR_BOLD
+
+
 @lru_cache(maxsize=None)
-def _font(bold: bool, size100: int, arabic: bool = False):
-    """Phông để ĐO: chữ Latin = Liberation Sans (cùng thông số Arial); chữ Ả Rập = phông có chữ Ả Rập + ghép nét (Raqm)."""
-    files = (_FONT_AR_BOLD if bold else _FONT_AR) if arabic else (_FONT_BOLD if bold else _FONT_FILES)
+def _font(bold: bool, size100: int, arabic: bool = False, family: str | None = None):
+    """Phông để ĐO: chữ Latin = Liberation Sans (cùng thông số Arial); chữ Ả Rập = phông Ả Rập của tài liệu
+    (nhận dạng từ ảnh) + ghép nét (Raqm)."""
+    if arabic:
+        reg, bd = _ar_files(family or FONT_AR)
+        files = bd if bold else reg
+    else:
+        files = _FONT_BOLD if bold else _FONT_FILES
     engine = ImageFont.Layout.RAQM if arabic and _raqm() else ImageFont.Layout.BASIC
     for p in files:
         if Path(p).exists():
@@ -69,7 +92,8 @@ def _raqm() -> bool:
 
 
 def _font_for(text: str, bold: bool):
-    return _font(bold, 100, bool(_ARABIC.search(text or "")) and is_rtl(text or ""))
+    arabic = bool(_ARABIC.search(text or "")) and is_rtl(text or "")
+    return _font(bold, 100, arabic, ar_family() if arabic else None)
 
 
 def text_width(text: str, size: float, bold: bool = False) -> float:
@@ -96,10 +120,22 @@ def wrap(text: str, width: float, size: float, bold: bool = False) -> list[str]:
 
 # ------------------------------------------------------------------ đọc ảnh
 
+def ink_mask(g: np.ndarray) -> np.ndarray:
+    """Mực trong một vùng xám: ngưỡng THÍCH NGHI = giữa màu nền và màu mực đậm nhất của vùng (ảnh scan mờ / nén
+    nét chỉ còn xám 100–140 → ngưỡng cố định 150 mất ~80% nét). Vùng không có tương phản → không có mực."""
+    if g.size == 0:
+        return np.zeros(g.shape, bool)
+    bg = float(np.percentile(g, 75))
+    dark = float(np.percentile(g, 0.5))
+    if bg - dark < 40:
+        return np.zeros(g.shape, bool)
+    return g < min(200.0, (bg + dark) / 2)
+
+
 def _ink(img: Image.Image, box) -> np.ndarray:
     x1, y1, x2, y2 = [int(round(v)) for v in box]
     g = np.asarray(img.convert("L").crop((x1, y1, max(x2, x1 + 1), max(y2, y1 + 1))), dtype=np.uint8)
-    return g < 150
+    return ink_mask(g)
 
 
 def text_bands(img: Image.Image, box) -> list[tuple[int, int]]:
@@ -165,8 +201,9 @@ def _run(text: str, size_pt: float, bold=False, rtl=False, color: str | None = N
     sz = max(2, int(round(size_pt * 2)))
     # đoạn tiếng Ả Rập: MỘT phông cho cả đoạn (kể cả số, chữ Latin) — trộn phông thì mỗi chương trình chia chiều cao
     # dòng theo phông khác nhau (LibreOffice lấy tỉ lệ của phông Latin) → nét chữ lệch dọc
-    fa = FONT_AR if rtl else FONT
-    rpr = (f'<w:rPr><w:rFonts w:ascii="{fa}" w:hAnsi="{fa}" w:cs="{FONT_AR}" w:eastAsia="{fa}"/>'
+    ar = ar_family()
+    fa = ar if rtl else FONT
+    rpr = (f'<w:rPr><w:rFonts w:ascii="{fa}" w:hAnsi="{fa}" w:cs="{ar}" w:eastAsia="{fa}"/>'
            f'{"<w:b/><w:bCs/>" if bold else ""}{f"<w:color w:val={chr(34)}{color}{chr(34)}/>" if color else ""}'
            f'{"<w:rtl/>" if rtl else ""}'
            f'<w:sz w:val="{sz}"/><w:szCs w:val="{sz}"/></w:rPr>')
@@ -511,6 +548,14 @@ _EMBED = {FONT: ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.tt
                     "/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf")}
 
 
+def _embed_set() -> dict:
+    """Phông nhúng cho tài liệu đang dựng: Liberation Sans + phông Ả Rập của tài liệu."""
+    fam = ar_family()
+    reg, bd = _ar_files(fam)
+    return {FONT: _EMBED[FONT], fam: (next((p for p in reg if Path(p).exists()), reg[0]),
+                                      next((p for p in bd if Path(p).exists()), bd[0]))}
+
+
 def _obfuscate(data: bytes, guid: str) -> bytes:
     """ECMA-376 §17.8.1: XOR 32 byte đầu của phông với khoá lấy từ GUID (đảo thứ tự byte)."""
     hexs = guid.strip("{}").replace("-", "")
@@ -763,12 +808,53 @@ def _correct(s: dict, got, apply: bool = True) -> float:
 
 # ------------------------------------------------------------------ dựng tài liệu
 
+def detect_arabic_font(pages: list[tuple[Image.Image, list[dict]]]) -> tuple[str | None, dict]:
+    """Phông Ả Rập của tài liệu: lấy các khối chữ Ả Rập MỘT dòng (chữ OCR ↔ đúng một dải mực), so mẫu với thư viện."""
+    from .arabic_fonts import identify
+
+    lines = []
+    for img, blocks in pages:
+        rgb = img.convert("RGB")
+        gray = None
+        for b in blocks or []:
+            cat, bbox = b.get("category") or "Text", b.get("bbox")
+            if cat in IMAGE_CATEGORIES or cat == "Table" or not bbox or len(bbox) != 4:
+                continue
+            t = plain_text(b.get("text") or "").replace("**", "").strip()
+            if "\n" in t or not (_ARABIC.search(t) and is_rtl(t)):
+                continue
+            x1, y1, x2, y2 = [float(v) for v in bbox]
+            bands = text_bands(rgb, (x1, y1, x2, y2))
+            if len(bands) != 1:
+                continue
+            if gray is None:
+                gray = np.asarray(rgb.convert("L"))
+            m = ink_mask(gray[int(y1 + bands[0][0]):int(y1 + bands[0][1]) + 1, int(x1):int(round(x2))])
+            lines.append((m, t))
+    return identify(lines)
+
+
 def build_exact_docx(pages: list[tuple[Image.Image, list[dict]]], out_path, title: str | None = None,
-                     calibrate: str | bool | None = "auto", rounds: int = 2) -> dict:
+                     calibrate: str | bool | None = "auto", rounds: int = 2, arabic_font: str | None = "auto") -> dict:
     """pages: [(ảnh trang, [khối {category, bbox, text}])] → ghi DOCX; trả về thống kê.
 
     calibrate: "auto" = có LibreOffice thì hiệu chỉnh (dựng thử, đo từng khối theo màu riêng, sửa cỡ chữ + vị trí,
-    lặp `rounds` vòng); None/False = không; đường dẫn soffice = dùng bản đó."""
+    lặp `rounds` vòng); None/False = không; đường dẫn soffice = dùng bản đó.
+    arabic_font: "auto" = nhận dạng phông Ả Rập từ ảnh (ocrbench.arabic_fonts); tên phông = dùng phông đó;
+    None = phông mặc định (FONT_AR)."""
+    fam, scores = (detect_arabic_font(pages) if arabic_font == "auto" else (arabic_font, {}))
+    token = _AR_FAMILY.set(fam)
+    try:
+        stats = _build_exact(pages, out_path, title, calibrate, rounds)
+    finally:
+        _AR_FAMILY.reset(token)
+    stats["arabic_font"] = fam or FONT_AR
+    if scores:
+        stats["arabic_font_scores"] = dict(list(scores.items())[:3])
+    return stats
+
+
+def _build_exact(pages, out_path, title, calibrate, rounds) -> dict:
     out_path = Path(out_path)
     soffice = find_soffice(calibrate if isinstance(calibrate, str) else None) if calibrate else None
     specs_by_page: list[list[dict]] = []
@@ -891,5 +977,5 @@ def _build_once(pages, out_path, title, colors, specs_by_page: list) -> dict:
             par._p.append(parse_xml(xml.replace("<w:r>", f"<w:r {ns}>", 1)))
         stats["pages"] += 1
     doc.save(out_path)
-    stats["fonts"] = embed_fonts(out_path)
+    stats["fonts"] = embed_fonts(out_path, _embed_set())
     return stats

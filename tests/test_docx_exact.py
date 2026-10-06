@@ -44,6 +44,7 @@ def test_build_positions_text_and_images(tmp_path):
     out = tmp_path / "x.docx"
     st = build_exact_docx([(img, blocks), (img, [])], out, title="t", calibrate=None)
     fonts = st.pop("fonts")
+    assert st.pop("arabic_font")  # không có chữ Ả Rập → phông mặc định
     assert st == {"pages": 2, "text": 2, "table": 1, "image": 2, "whole_page_image": 1}
     names = zipfile.ZipFile(out).namelist()
     if fonts:  # phông được nhúng (đo = hiển thị trên mọi máy)
@@ -148,3 +149,39 @@ def test_calibration_with_libreoffice(tmp_path):
     cal = st["calibration"]
     assert cal["soffice"] and cal["max_dev_mm_final"] <= 2.0, cal
     assert not list(tmp_path.glob("*.cal.docx"))  # bản dựng thử đã xoá
+
+
+def test_ink_mask_adaptive_on_faded_scan():
+    """Nét mờ (xám ~120) vẫn là mực; vùng trắng / không tương phản thì không có mực."""
+    import numpy as np
+
+    from ocrbench.docx_exact import ink_mask
+
+    g = np.full((20, 100), 235, np.uint8)
+    g[8:12, 10:90] = 120
+    m = ink_mask(g)
+    assert m[8:12, 10:90].all() and not m[:8].any()
+    assert not ink_mask(np.full((20, 100), 240, np.uint8)).any()
+
+
+def test_identify_arabic_font_from_rendered_lines():
+    """So mẫu: dòng chữ dựng bằng Amiri / Tajawal được nhận đúng phông (cần thư viện phông đã tải)."""
+    import numpy as np
+    from PIL import ImageFilter
+
+    from ocrbench import arabic_fonts as AF
+
+    lib = AF.available()
+    if not {"Amiri", "Tajawal", "Noto Sans Arabic"} <= set(lib):
+        pytest.skip("chưa tải thư viện phông Ả Rập (python -m ocrbench.arabic_fonts)")
+    texts = ["البند الأول: تحرر هذا العقد من نسختين أصليتين", "نرجو التكرم بتزويدنا بعرض أسعار محدث"]
+    for fam in ("Amiri", "Tajawal"):
+        lines = []
+        for t in texts:
+            f = ImageFont.truetype(str(lib[fam][0]), 30, layout_engine=ImageFont.Layout.RAQM)
+            im = Image.new("L", (900, 80), 255)
+            ImageDraw.Draw(im).text((20, 15), t, font=f, fill=0, direction="rtl", language="ar")
+            im = im.filter(ImageFilter.GaussianBlur(0.7))  # hơi mờ như ảnh scan
+            lines.append((np.asarray(im) < 160, t))
+        best, scores = AF.identify(lines, families=["Amiri", "Tajawal", "Noto Sans Arabic"])
+        assert best == fam, scores
