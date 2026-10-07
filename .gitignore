@@ -7,3 +7,6 @@ __pycache__/
 *.zip
 scripts/ooxml_validate/bin/
 scripts/ooxml_validate/obj/
+# giấy tờ thật của khách (có dữ liệu cá nhân) — KHÔNG BAO GIỜ commit
+real_docs/
+real_docs_out/
