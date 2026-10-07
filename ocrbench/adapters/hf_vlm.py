@@ -149,7 +149,9 @@ class HFVLMAdapter(Adapter):
         if p["system_prompt"]:
             msgs.append({"role": "system", "content": [{"type": "text", "text": p["system_prompt"]}]})
         parts = [{"type": "image", "image": im} if embed_images else {"type": "image"} for im in images]
-        msgs.append({"role": "user", "content": [*parts, {"type": "text", "text": self.prompt_for(item)}]})
+        prompt = self.prompt_for(item)
+        # prompt rỗng = chỉ gửi ảnh (vd. CHURRO: toàn bộ chỉ dẫn nằm ở system prompt)
+        msgs.append({"role": "user", "content": [*parts, *([{"type": "text", "text": prompt}] if prompt else [])]})
         return msgs
 
     def predict(self, image, item):

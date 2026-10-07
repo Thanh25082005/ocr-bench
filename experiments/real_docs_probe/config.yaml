@@ -1,0 +1,53 @@
+# Thí nghiệm giấy tờ cũ (ảnh thật của khách) — CÔ LẬP, không phải benchmark.
+# Dữ liệu và kết quả nằm NGOÀI repo, KHÔNG đẩy lên GitHub (status.push: false; thư mục real_docs* trong .gitignore).
+dataset: /kaggle/working/real_docs/khong_dung.jsonl   # không dùng (thí nghiệm gọi Converter trực tiếp)
+output_dir: /kaggle/working/real_docs_out/_runs
+status:
+  push: false
+
+models:
+  # dots.mocr đúng như source gốc (bố cục đầy đủ) — chạy bằng python của venv dots (transformers 4.56.1)
+  - name: dots_mocr
+    adapter: dots
+    params:
+      model_id: dots-studio/dots.mocr
+      prompt_mode: prompt_layout_all_en
+      fitz_preprocess: false
+      max_new_tokens: 24000
+      stop_on_loop: true
+      modes:
+        Bố cục đầy đủ: {}
+        Chỉ chữ: {prompt_mode: prompt_ocr}
+
+  # CHURRO-3B (Stanford, EMNLP 2025): Qwen2.5-VL-3B huấn luyện trên 99k trang tài liệu LỊCH SỬ (có Ả Rập, Hebrew).
+  # Chỉ dẫn giống hệt repo gốc (templates/presets.py: CHURRO_3B_XML_TEMPLATE): chỉ system prompt + ảnh, ra XML.
+  # Ảnh: cạnh dài tối đa 2500 px (MAX_INLINE_IMAGE_DIM của họ). Giấy phép: Qwen-research (chỉ nghiên cứu).
+  - name: churro_3b
+    adapter: hf_vlm
+    params:
+      model_id: stanford-oval/churro-3B
+      system_prompt: "Transcribe the entirety of this historical document to XML format."
+      prompt: ""
+      max_new_tokens: 8000
+      stop_on_loop: true
+      max_image_side: 2500
+
+  # Qari-OCR 0.4 (Qwen3-VL-4B + LoRA Ả Rập) — như configs/kaggle_example.yaml; cần transformers >= 4.57
+  - name: qari_0_4
+    adapter: hf_vlm
+    params:
+      model_id: Qwen/Qwen3-VL-4B-Instruct
+      adapter_id: YasserSami/Qari-OCR-0.4.0-VL-4B-Instruct
+      processor_id: YasserSami/Qari-OCR-0.4.0-VL-4B-Instruct
+      prompt: "Free OCR."
+      max_new_tokens: 4096
+      stop_on_loop: true
+
+  # sherif (Qwen2.5-VL-3B, chữ viết tay Ả Rập–Anh) — đang đứng đầu benchmark chữ tay
+  - name: sherif_handwriting
+    adapter: hf_vlm
+    params:
+      model_id: sherif1313/Arabic-English-handwritten-OCR-v3
+      prompt: "ارجو استخراج النص العربي كاملاً من هذه الصورة من البداية الى النهاية بدون اي اختصار ودون ذيادة او حذف. اقرأ كل المحتوى النصي الموجود في الصورة:"
+      max_new_tokens: 4096
+      stop_on_loop: true
