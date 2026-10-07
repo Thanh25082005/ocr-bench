@@ -185,7 +185,7 @@ class Converter:
             src = pr.source if pr.source != "OCR" else f"OCR · model {self.model}"
             header = (f"Trang {pr.index} — nguồn: {src}" + (f" — LỖI: {pr.error}" if pr.error else "")
                       + (f" — ⚠ CẦN SOÁT: {pr.note}" if pr.note else ""))
-            add_page(doc, pr.text, header=header, first=(i == 0))
+            add_page(doc, pr.text, header=header, first=(i == 0), blocks=pr.blocks, image=pr.image)
         result.docx = out_dir / f"{path.stem}.docx"
         doc.save(result.docx)
         if exact and any(pr.blocks and any("text" in b for b in pr.blocks) for pr in result.pages):

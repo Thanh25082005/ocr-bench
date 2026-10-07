@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageFont
 
-from .docx_export import _ARABIC, _cell_text, is_rtl
+from .docx_export import _ARABIC, _STRONG, _cell_text, is_rtl, para_rtl
 
 PAGE_W_MM = 210.0
 EMU_PER_MM = 36000
@@ -90,16 +90,6 @@ def _raqm() -> bool:
     from PIL import features
 
     return bool(features.check("raqm"))
-
-
-_STRONG = re.compile(r"[A-Za-z\u00C0-\u024F\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]")
-
-
-def para_rtl(text: str) -> bool:
-    """Hướng đoạn theo UAX #9 (quy tắc P2): chữ CÓ HƯỚNG đầu tiên là Ả Rập / Do Thái → phải → trái.
-    ("الهاتف: +971 56 512 3883 contact@firm.co.uk" nhiều chữ Latin hơn nhưng vẫn là đoạn phải → trái.)"""
-    m = _STRONG.search(text or "")
-    return bool(m) and m.group(0) >= "\u0590"
 
 
 def _font_for(text: str, bold: bool):

@@ -319,3 +319,28 @@ def test_residual_layer_ignores_aligned_glyph_slivers():
         alpha = np.zeros((800, 600), bool)
         alpha[ry:ry + rim.height, rx:rx + rim.width] = np.asarray(rim)[..., 3] > 0
         assert not alpha[:, 500:506].any()
+
+
+def test_editable_docx_inserts_pictures_in_reading_order(tmp_path):
+    """Bản A (sửa được): khối Picture (logo / chữ ký / con dấu) thành ảnh cắt từ trang gốc, đúng thứ tự đọc;
+    ảnh cùng hàng chung một dòng; đoạn Ả Rập căn đầu dòng (jc=start), bidi đúng vị trí trong pPr."""
+    from ocrbench.docx_export import add_page, new_document
+
+    img, blocks = _page()
+    blocks = blocks + [{"category": "Picture", "bbox": [100, 500, 300, 560], "text": ""},
+                       {"category": "Picture", "bbox": [700, 505, 900, 565], "text": ""},
+                       {"category": "Text", "bbox": [100, 600, 600, 640], "text": "## الطرف الأول"}]
+    doc = new_document("t")
+    add_page(doc, "", header="h", first=True, blocks=blocks, image=img)
+    out = tmp_path / "a.docx"
+    doc.save(out)
+    xml = zipfile.ZipFile(out).read("word/document.xml").decode()
+    assert xml.count("<pic:pic") == 3  # logo + 2 ảnh cùng hàng
+    body = re.sub(r"<w:drawing>.*?</w:drawing>", "[ẢNH]", xml, flags=re.S)
+    words = re.findall(r"<w:t[^>]*>([^<]*)</w:t>|(\[ẢNH\])", body)
+    seq = [a or b for a, b in words]
+    assert seq.index("[ẢNH]") > seq.index("INVOICE No. 2041")  # logo sau tiêu đề như thứ tự khối
+    p = re.search(r"<w:p>(?:(?!</w:p>).)*\[ẢNH\](?:(?!</w:p>).)*\[ẢNH\](?:(?!</w:p>).)*</w:p>", body, flags=re.S)
+    assert p  # hai ảnh cùng hàng → cùng một đoạn
+    rtl_p = re.search(r"<w:pPr>((?:(?!</w:pPr>).)*)</w:pPr>(?:(?!</w:p>).)*الطرف", xml, flags=re.S).group(1)
+    assert 'w:jc w:val="start"' in rtl_p and rtl_p.index("pStyle") < rtl_p.index("bidi") < rtl_p.index("jc")
