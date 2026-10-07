@@ -1005,7 +1005,18 @@ def text_spec(img, box, text: str, cat: str) -> dict:
     ink = None  # hộp mực gốc (toạ độ trang) — đích để hiệu chỉnh
     if ext and bands:
         ink = (x1 + ext[0], y1 + bands[0][0], x1 + ext[1], y1 + bands[-1][1])
-    return {"box": (x1, y1, x2, y2), "segs": segs, "size": size, "em": asc + desc, "top": top, "n_src": n,
+    # mỗi dòng phải VỪA chỗ chứa (đo từng đoạn theo đúng đậm / thường): dòng dài hơn chỗ chứa thì chương trình tự
+    # xuống dòng (vd. dòng căn đều có phần **đậm** — đo cả dòng bằng chữ thường thì thiếu) → co ngang cho vừa
+    margin = 0.04 * bw
+    if centered:
+        avail = bw + 2 * margin
+    elif justify:
+        avail = bw - lg - rg
+    else:
+        avail = bw + margin - (rg if align in ("right", "start") else lg)
+    need = max((sum(text_width(t, size, b) for t, b in line if t) for line in segs), default=0.0)
+    sx0 = min(1.0, 0.995 * avail / need) if need > 0 else 1.0
+    return {"box": (x1, y1, x2, y2), "segs": segs, "size": size, "em": asc + desc, "top": top, "n_src": n, "sx": sx0,
             "pitch": pitch if (pitch and len(lines) == n) else None, "spacing": spacing, "align": align, "rtl": rtl,
             "justify": justify, "lg": lg, "rg": rg, "ink": ink, "fs": 1.0, "dx": 0.0, "dy": 0.0,
             "ink_top": y1 + (bands[0][0] if bands else 0), "bidi_forced": bidi_forced, "color": color}
