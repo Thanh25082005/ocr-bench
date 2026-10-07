@@ -96,3 +96,18 @@ def test_parse_file_writes_same_files_as_their_tool(tmp_path):
     parse_file(FakeDots(), tmp_path / "doc2.pdf", tmp_path / "out", prompt_mode="prompt_ocr")
     names = sorted(p.name for p in (tmp_path / "out" / "doc2").iterdir())
     assert names == ["doc2_page_0.jpg", "doc2_page_0.md", "doc2_page_1.jpg", "doc2_page_1.md"]
+
+
+def test_layout_loop_stops_only_on_repeated_cell():
+    """dots lặp cùng một ô (toạ độ khác nhau) tới hết token — dừng sớm; khối khác nhau / chữ ngắn / ít lần → không."""
+    from ocrbench.adapters.dots import layout_loop
+
+    rep = ", ".join('{"bbox": [10, %d, 200, %d], "category": "Text", "text": "Binds to Nucleocapsid"}' % (i, i + 9)
+                    for i in range(30))
+    assert layout_loop('[{"bbox": [1,2,3,4], "category": "Title", "text": "T"}, ' + rep)
+    diff = ", ".join('{"bbox": [1,2,3,4], "category": "Text", "text": "dòng %d"}' % i for i in range(60))
+    assert not layout_loop("[" + diff)
+    short = ", ".join('{"bbox": [1,%d,3,4], "category": "Text", "text": "1"}' % i for i in range(60))
+    assert not layout_loop("[" + short)  # ô số ngắn lặp hợp lệ (bảng)
+    few = ", ".join('{"bbox": [1,%d,3,4], "category": "Text", "text": "Binds to Nucleocapsid"}' % i for i in range(10))
+    assert not layout_loop("[" + few)

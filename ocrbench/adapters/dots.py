@@ -143,10 +143,12 @@ class DotsAdapter(Adapter):
             from .hf_vlm import _LoopStop
 
             loop = _LoopStop(torch, start, 1, p["loop_max_period"], p["loop_min_span"])
+            tok = getattr(self._processor, "tokenizer", self._processor)
+            layout_loop = _LayoutLoopStop(tok, start)
 
             class _Wrap(StoppingCriteria):
                 def __call__(self, input_ids, scores, **kw):
-                    return loop(input_ids, scores)
+                    return loop(input_ids, scores) | layout_loop(input_ids)
 
             gen["stopping_criteria"] = StoppingCriteriaList([_Wrap()])
         with torch.inference_mode():
@@ -204,6 +206,45 @@ class DotsAdapter(Adapter):
     def close(self):
         del self._model
         self._torch.cuda.empty_cache()
+
+
+_CELL = re.compile(r'"category":\s*"([^"]+)"\s*,\s*"text":\s*"((?:[^"\\\\]|\\\\.)*)"')
+
+
+def layout_loop(text: str, min_repeats: int = 25, min_chars: int = 6) -> bool:
+    """Đuôi JSON bố cục là MỘT cặp (category, text) lặp liên tiếp ≥ min_repeats lần (toạ độ có thể khác nhau).
+    dots hay rơi vào vòng này (vd. 500 lần cùng một ô bảng tới hết 24000 token, ~40 phút/trang trên T4). Bộ làm
+    sạch của họ (OutputCleaner) vốn XOÁ các bản trùng → dừng sớm cho ra cùng kết quả, chỉ tiết kiệm thời gian."""
+    cells = _CELL.findall(text)
+    if len(cells) < min_repeats:
+        return False
+    last = cells[-1]
+    if len(last[1]) < min_chars:
+        return False
+    n = 0
+    for c in reversed(cells):
+        if c != last:
+            break
+        n += 1
+    return n >= min_repeats
+
+
+class _LayoutLoopStop:
+    """StoppingCriteria cho dots: mỗi `every` bước giải mã phần đuôi đã sinh, dừng khi `layout_loop`."""
+
+    def __init__(self, tokenizer, start: int, every: int = 64, tail_tokens: int = 6000):
+        self.tok, self.start, self.every, self.tail = tokenizer, start, every, tail_tokens
+        self.calls = 0
+        self.stopped = False
+
+    def __call__(self, input_ids):
+        import torch
+
+        self.calls += 1
+        if not self.stopped and self.calls % self.every == 0 and input_ids.shape[1] - self.start > 200:
+            gen = input_ids[0, max(self.start, input_ids.shape[1] - self.tail):]
+            self.stopped = layout_loop(self.tok.decode(gen, skip_special_tokens=True))
+        return torch.tensor([self.stopped], device=input_ids.device)
 
 
 def postprocess_response(response, prompt_mode, origin_image, image, min_pixels, max_pixels, extra=None) -> dict:
