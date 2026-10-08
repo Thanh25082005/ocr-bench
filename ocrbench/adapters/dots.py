@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 from .base import Adapter, Prediction
@@ -62,6 +63,11 @@ class DotsAdapter(Adapter):
         "stop_on_loop": True,
         "loop_max_period": 60,
         "loop_min_span": 600,       # bảng HTML nhiều ô trống lặp hợp lệ, đừng cắt nhầm
+        "loop_long_max_period": 0,  # >0: bắt cả vòng lặp chu kỳ dài tới chừng này token (phải lặp ≥ 8 lần); 0 = tắt
+        "max_time": None,           # giây: giới hạn thời gian sinh mỗi trang (web demo); None = không giới hạn
+        # trang bị dừng giữa chừng (lặp / hết thời gian / hết token): bỏ phần lặp, đóng JSON dở dang để GIỮ khối cuối
+        # (thường là đoạn văn dài đọc đúng tới chỗ bắt đầu lặp) thay vì vứt cả khối. False = như source gốc
+        "repair_truncated": False,
         "dtype": "auto",
         "vision_dtype": "float32",
         "attn_implementation": "sdpa",
@@ -136,13 +142,16 @@ class DotsAdapter(Adapter):
             n_img = int((inputs["input_ids"] == self._model.config.image_token_id).sum())
             max_new = min(max_new, int(p["adaptive_max_tokens"]) * n_img + 512)
         gen = {"max_new_tokens": max_new}
+        if p["max_time"]:
+            gen["max_time"] = float(p["max_time"])
         loop = None
         if p["stop_on_loop"]:
             from transformers import StoppingCriteria, StoppingCriteriaList
 
             from .hf_vlm import _LoopStop
 
-            loop = _LoopStop(torch, start, 1, p["loop_max_period"], p["loop_min_span"])
+            loop = _LoopStop(torch, start, 1, p["loop_max_period"], p["loop_min_span"],
+                             long_max_period=p["loop_long_max_period"])
             tok = getattr(self._processor, "tokenizer", self._processor)
             layout_loop = _LayoutLoopStop(tok, start)
 
@@ -151,6 +160,7 @@ class DotsAdapter(Adapter):
                     return loop(input_ids, scores) | layout_loop(input_ids)
 
             gen["stopping_criteria"] = StoppingCriteriaList([_Wrap()])
+        t_gen = time.perf_counter()
         with torch.inference_mode():
             generated_ids = self._model.generate(**gen_inputs, **gen)
         ids = inputs["input_ids"]
@@ -162,6 +172,9 @@ class DotsAdapter(Adapter):
                                                 clean_up_tokenization_spaces=False)[0]
         n_new = int(trimmed[0].shape[0])
         extra = {"new_tokens": n_new, "hit_max_tokens": n_new >= max_new, "max_new_tokens": max_new}
+        if p["max_time"] and n_new < max_new and time.perf_counter() - t_gen >= float(p["max_time"]) \
+                and not (loop is not None and loop.stopped[0]):
+            extra["hit_max_time"] = True
         if loop is not None and loop.stopped[0]:
             extra["stopped_loop"] = True
         return response, extra
@@ -190,6 +203,11 @@ class DotsAdapter(Adapter):
                 origin_image, [list(bbox)], input_width=image.width, input_height=image.height,
                 min_pixels=min_pixels, max_pixels=max_pixels)[0])
         response, extra = self._inference_with_hf(image, prompt)
+        if p["repair_truncated"] and prompt_mode in LAYOUT_MODES and prompt_mode != "prompt_layout_only_en" and (
+                extra.get("stopped_loop") or extra.get("hit_max_time") or extra.get("hit_max_tokens")):
+            fixed = close_truncated_layout(response)
+            if fixed != response:
+                response, extra["truncated_repaired"] = fixed, True
         return postprocess_response(response, prompt_mode, origin_image, image, min_pixels, max_pixels, extra)
 
     def predict(self, image, item):
@@ -227,6 +245,43 @@ def layout_loop(text: str, min_repeats: int = 25, min_chars: int = 6) -> bool:
             break
         n += 1
     return n >= min_repeats
+
+
+def _strip_repeated_tail(text: str, min_repeats: int = 3, min_span: int = 30, max_period: int = 4000) -> str:
+    """Đuôi là một đoạn lặp liên tiếp ≥ min_repeats lần (và dài ≥ min_span ký tự, để không đụng tới dấu chấm dẫn
+    "....." hợp lệ) → chỉ giữ một bản (chu kỳ ngắn nhất tìm được)."""
+    for period in range(1, min(max_period, len(text) // min_repeats) + 1):
+        unit = text[-period:]
+        if text.endswith(unit * max(min_repeats, -(-min_span // period))):
+            while text.endswith(unit * 2):
+                text = text[:-period]
+            return text
+    return text
+
+
+def close_truncated_layout(response: str) -> str:
+    """JSON bố cục bị dừng giữa chừng → bỏ phần lặp ở đuôi, đóng chuỗi "text" / khối / mảng đang dở. Không sửa
+    được thành JSON hợp lệ → trả nguyên chuỗi cũ (bộ làm sạch phía sau vẫn nhặt các khối hoàn chỉnh như trước)."""
+    try:
+        json.loads(response)
+        return response
+    except json.JSONDecodeError:
+        pass
+    s = _strip_repeated_tail(response.rstrip())
+    if (len(s) - len(s.rstrip("\\"))) % 2:  # dấu \ thoát dở ở cuối
+        s = s[:-1]
+    s = re.sub(r"\\u[0-9a-fA-F]{0,3}$", "", s)
+    candidates = [s + tail for tail in ('"}]', '}]', ']')]
+    if not s.lstrip().startswith("["):
+        candidates += ["[" + c for c in candidates]
+    for c in candidates:
+        try:
+            data = json.loads(c)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, list) and data and all(isinstance(d, dict) for d in data):
+            return c
+    return response
 
 
 class _LayoutLoopStop:

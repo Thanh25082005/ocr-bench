@@ -13,6 +13,9 @@ models:
     fitz_preprocess: false
     max_new_tokens: 24000
     stop_on_loop: true
+    loop_long_max_period: 256   # bắt cả dòng dài bị lặp (ảnh giấy tờ cũ: dòng Ả Rập ~100 token lặp tới hết token, ~25 phút)
+    repair_truncated: true      # trang bị dừng giữa chừng: giữ khối cuối (bỏ phần lặp) thay vì mất cả khối
+    max_time: 600               # tối đa 10 phút sinh mỗi trang: một trang hỏng không chặn hàng đợi của web quá lâu
     modes:
       Bố cục đầy đủ: {}
       Chỉ chữ:

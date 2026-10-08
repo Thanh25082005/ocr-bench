@@ -98,7 +98,8 @@ def make_viewer(gr, label: str):
                 raw = gr.Textbox(lines=30, max_lines=60, show_label=False, interactive=False)
     with gr.Row():
         dl_edit = gr.File(label="📄 DOCX sửa được (soạn thảo lại)", file_count="multiple", interactive=False)
-        dl_exact = gr.File(label="📐 DOCX giữ nguyên bố cục (xem, in, lưu trữ)", file_count="multiple",
+        dl_exact = gr.File(label="🧱 DOCX danh sách khối (Title / Text / Table / Picture... từ trên xuống)",
+                           file_count="multiple",
                            interactive=False)
         dl_src = gr.File(label="File gốc", file_count="multiple", interactive=False)
 
@@ -135,7 +136,7 @@ def make_viewer(gr, label: str):
         has_layout = bool(job) and any(p.get("layout_image") for f in job["files"] for p in f["pages"])
         return (job, gr.update(choices=names, value=first), gr.update(choices=labels, value=page),
                 gr.update(value=has_layout, visible=has_layout), *_render(job, 0, page, has_layout),
-                _downloads(job, ("docx",)), _downloads(job, ("docx_exact",)) or None, _downloads(job, ("source",)))
+                _downloads(job, ("docx",)), _downloads(job, ("docx_blocks", "docx_exact")) or None, _downloads(job, ("source",)))
 
     load_outputs = [job_state, file_dd, page_dd, show_layout, *view_outputs, dl_edit, dl_exact, dl_src]
     return load, load_outputs
@@ -177,7 +178,7 @@ def convert_to_job(converter: Converter, hist: Path, paths: list[Path], use_text
         try:
             res = converter.convert_file(src, fdir, force_ocr=not use_text_layer, pages=pages or None,
                                          doc_type="table" if doc_type == "Có bảng" else "text", progress=progress,
-                                         mode=mode or None, save_pages=True)
+                                         mode=mode or None, save_pages=True, exact=False)
         except Exception as e:
             rows.append([path.name, "—", "lỗi", 0.0, f"{type(e).__name__}: {e}"])
             job["files"].append({"name": path.name, "source": H.rel(src, job_dir), "docx": None, "pages": [],

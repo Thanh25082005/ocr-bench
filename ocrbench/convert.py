@@ -51,6 +51,7 @@ class FileResult:
     pages: list[PageResult] = field(default_factory=list)
     docx: Path | None = None
     docx_exact: Path | None = None  # DOCX giữ nguyên bố cục (mỗi khối đúng toạ độ) — chỉ khi model trả khối có chữ
+    docx_blocks: Path | None = None  # DOCX danh sách khối: loại + nội dung từng khối theo thứ tự đọc (docx_blocks.py)
 
 
 def parse_pages(spec: str | None, n_pages: int) -> list[int]:
@@ -169,7 +170,7 @@ class Converter:
 
     def convert_file(self, path: str | Path, out_dir: str | Path, force_ocr: bool = False, pages: str | None = None,
                      doc_type: str = "text", progress=None, mode: str | None = None,
-                     save_pages: bool = False, exact: bool = True) -> FileResult:
+                     save_pages: bool = False, exact: bool = True, blocks: bool = True) -> FileResult:
         path, out_dir = Path(path), Path(out_dir)
         if self.modes or mode:
             self.set_mode(mode)
@@ -195,6 +196,10 @@ class Converter:
                      if pr.image is not None]
             result.docx_exact = out_dir / f"{path.stem}_bo_cuc.docx"
             build_exact_docx(pages, result.docx_exact, title=path.stem)
+        if blocks:
+            from .docx_blocks import build_blocks_docx
+
+            result.docx_blocks = build_blocks_docx(result.pages, out_dir / f"{path.stem}_khoi.docx", title=path.stem)
         for pr in result.pages:
             pr.image = None  # không giữ ảnh trong bộ nhớ sau khi dựng xong
         return result
@@ -308,6 +313,10 @@ def _page_result(n: int, pred, seconds: float) -> PageResult:
         notes.append("model bị lặp, đã dừng sớm")
     if pred.extra.get("hit_max_tokens"):
         notes.append("bị cắt do hết max_new_tokens")
+    if pred.extra.get("hit_max_time"):
+        notes.append("bị cắt do quá thời gian cho phép mỗi trang")
+    if pred.extra.get("truncated_repaired"):
+        notes.append("khối cuối bị cắt dở, đã bỏ phần lặp và giữ phần đọc được")
     if pred.extra.get("layout") == "repaired":
         notes.append("JSON bố cục bị hỏng, đã nhặt lại các khối đọc được")
     elif pred.extra.get("layout") == "failed":

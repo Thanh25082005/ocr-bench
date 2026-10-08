@@ -261,8 +261,12 @@ class _LoopStop:
     """Dừng sinh token cho từng dòng của batch khi đuôi kết quả là một đoạn ngắn (≤ max_period token) lặp liên tiếp,
     tổng dài ≥ min_span token. Trang như vậy đã hỏng; dừng sớm tiết kiệm hàng nghìn token vô ích."""
 
-    def __init__(self, torch, start: int, n_rows: int, max_period: int, min_span: int, every: int = 16):
+    def __init__(self, torch, start: int, n_rows: int, max_period: int, min_span: int, every: int = 16,
+                 long_max_period: int = 0, long_min_reps: int = 8):
         self.torch, self.start, self.max_period, self.min_span, self.every = torch, start, max_period, min_span, every
+        # vòng lặp dài (vd. cả một dòng chữ Ả Rập có tashkeel ~100 token lặp mãi): chu kỳ max_period+1..long_max_period,
+        # phải lặp liên tiếp ≥ long_min_reps lần (đòi nhiều lần hơn để không cắt nhầm bảng có nhiều dòng trống giống nhau)
+        self.long_max_period, self.long_min_reps = long_max_period, long_min_reps
         self.stopped = [False] * n_rows
         self.calls = 0
 
@@ -273,15 +277,19 @@ class _LoopStop:
         gen = input_ids[:, self.start:]
         if self.calls % self.every or gen.shape[1] < self.min_span:
             return done
-        tail = gen[:, -max(self.min_span, 2 * self.max_period):].tolist()
+        tail = gen[:, -max(self.min_span, 2 * self.max_period, self.long_max_period * self.long_min_reps):].tolist()
         for r, t in enumerate(tail):
             if self.stopped[r]:
                 continue
-            for period in range(1, self.max_period + 1):
+            for period in range(1, max(self.max_period, self.long_max_period) + 1):
                 reps = -(-self.min_span // period)  # làm tròn lên
+                if period > self.max_period:
+                    reps = max(reps, self.long_min_reps)
                 span = period * reps
                 if span > len(t):
-                    break
+                    if period > self.max_period:
+                        break
+                    continue
                 seg = t[-span:]
                 if seg == seg[:period] * reps:
                     self.stopped[r] = True

@@ -164,9 +164,12 @@ def cmd_convert(a):
     conv = Converter(a.config, a.model, dpi=a.dpi, params=_params(a.set), gpus=a.gpus)
     for f in a.inputs:
         res = conv.convert_file(f, a.output, force_ocr=a.force_ocr, pages=a.pages, doc_type=a.doc_type, mode=a.mode,
+                                exact=a.exact,
                                 progress=lambda k, n, msg: print(f"  {msg} ({k + 1}/{n})", flush=True))
         n_ocr = sum(1 for p in res.pages if p.source == "OCR")
         n_err = sum(1 for p in res.pages if p.error)
+        if res.docx_blocks:
+            print(f"✔ {res.docx_blocks}  (danh sách khối theo thứ tự đọc)")
         if res.docx_exact:
             print(f"✔ {res.docx_exact}  (giữ nguyên bố cục)")
         print(f"✔ {res.docx}  ({len(res.pages)} trang: {n_ocr} qua OCR, {len(res.pages) - n_ocr - n_err} từ lớp chữ"
@@ -309,6 +312,7 @@ def main(argv=None):
     p.add_argument("--dpi", type=int, default=200)
     p.add_argument("--set", action="append", help="ghi đè tham số model, vd. --set batch_size=4 --set stop_on_loop=true")
     p.add_argument("--gpus", default="auto", help="auto = mọi GPU (một bản model mỗi GPU); vd. 0 hoặc 0,1")
+    p.add_argument("--exact", action="store_true", help="xuất thêm DOCX giữ nguyên bố cục (<tên>_bo_cuc.docx)")
     p.set_defaults(func=cmd_convert)
 
     p = sub.add_parser("dots-parse", help="chạy dots.ocr/dots.mocr giống tool gốc (json, jpg bố cục, md, _nohf.md)")

@@ -111,3 +111,41 @@ def test_layout_loop_stops_only_on_repeated_cell():
     assert not layout_loop("[" + short)  # ô số ngắn lặp hợp lệ (bảng)
     few = ", ".join('{"bbox": [1,%d,3,4], "category": "Text", "text": "Binds to Nucleocapsid"}' % i for i in range(10))
     assert not layout_loop("[" + few)
+
+
+def test_loop_stop_long_period():
+    """Dòng ~100 token lặp mãi (ảnh giấy tờ cũ): chỉ bắt khi bật long_max_period, và phải lặp ≥ 8 lần."""
+    import torch
+
+    from ocrbench.adapters.hf_vlm import _LoopStop
+
+    line = list(range(1000, 1100))  # chu kỳ 100 token
+    prefix = list(range(1, 300))
+
+    def run(gen, **kw):
+        stop = _LoopStop(torch, 0, 1, 60, 600, every=1, **kw)
+        return bool(stop(torch.tensor([gen]), None)[0])
+
+    assert not run(prefix + line * 10)  # mặc định (benchmark): như cũ, không bắt
+    assert run(prefix + line * 8, long_max_period=256)
+    assert not run(prefix + line * 7, long_max_period=256)  # 7 dòng trống giống nhau của bảng: không cắt
+    assert run(prefix + [5, 6] * 300, long_max_period=256)  # vòng ngắn vẫn bắt như cũ
+
+
+def test_close_truncated_layout_keeps_last_block():
+    """Dừng giữa khối đang lặp: giữ chữ trước chỗ lặp + một bản dòng lặp, đóng JSON; JSON đủ → không đổi."""
+    import json
+
+    from ocrbench.adapters.dots import close_truncated_layout
+
+    head = '[{"bbox": [1, 2, 3, 4], "category": "Title", "text": "عنوان"}, {"bbox": [5, 6, 7, 8], "category": "Text", '
+    rep = "وإذا الوكيل الخذير بالأقرار والتقرير\\n"
+    raw = head + '"text": "سطر أول صحيح\\n' + rep * 20 + rep[:9]
+    data = json.loads(close_truncated_layout(raw))
+    assert [d["category"] for d in data] == ["Title", "Text"]
+    assert data[1]["text"].startswith("سطر أول صحيح\n") and data[1]["text"].count("الخذير") <= 2
+    ok = head + '"text": "x....................................."}]'
+    assert close_truncated_layout(ok) == ok
+    assert close_truncated_layout('[{"bbox": [1, 2') == '[{"bbox": [1, 2'  # không sửa được → giữ nguyên
+    cut = '[{"bbox": [1, 2, 3, 4], "category": "Text", "text": "abc\\'  # cắt giữa dấu thoát
+    assert json.loads(close_truncated_layout(cut))[0]["text"] == "abc"
