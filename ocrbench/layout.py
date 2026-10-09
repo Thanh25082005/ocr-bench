@@ -162,15 +162,24 @@ COLORS = {"Title": (220, 38, 38), "Section-header": (8, 145, 178), "Text": (22, 
 
 def draw_blocks(image, blocks: list[Block]):
     """Ảnh trang có khung + số thứ tự đọc của từng khối (để người duyệt đối chiếu)."""
-    from PIL import ImageDraw
+    from PIL import ImageDraw, ImageFont
 
     img = image.convert("RGB").copy()
     d = ImageDraw.Draw(img)
     width = max(2, img.width // 500)
+    size = max(12, img.width // 90)  # nhãn đọc được cả trên trang scan 2000+ px
+    try:
+        font = ImageFont.load_default(size=size)
+    except TypeError:  # Pillow < 10.1: phông mặc định không đổi cỡ
+        font = ImageFont.load_default()
     for i, b in enumerate(blocks, 1):
         if not b.bbox:
             continue
         c = COLORS.get(b.category, (22, 163, 74))
         d.rectangle(b.bbox, outline=c, width=width)
-        d.text((b.bbox[0] + 4, max(0, b.bbox[1] - 14)), f"{i} {b.category}", fill=c)
+        label = f"{i} {b.category}"
+        x, y = b.bbox[0], max(0, b.bbox[1] - size - 4)
+        box = d.textbbox((x + 4, y), label, font=font)
+        d.rectangle((box[0] - 3, box[1] - 2, box[2] + 3, box[3] + 2), fill=c)  # nền màu để nhãn không chìm vào chữ
+        d.text((x + 4, y), label, fill=(255, 255, 255), font=font)
     return img

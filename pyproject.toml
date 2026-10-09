@@ -16,7 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 teds = ["apted>=1.0.3", "lxml>=5"]
 hf = ["torch", "transformers>=4.49", "accelerate", "peft", "bitsandbytes"]
-tesseract = ["pytesseract"]
+tesseract = ["pytesseract", "numpy", "scipy"]   # numpy/scipy: pictures (tìm con dấu, vân tay...)
 easyocr = ["easyocr"]
 paddle = ["paddleocr>=3.3"]
 surya = ["surya-ocr"]

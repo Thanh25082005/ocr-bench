@@ -1,0 +1,12 @@
+# Web demo trên máy KHÔNG có GPU: Tesseract (CPU) thay cho dots.mocr.
+#   ocrbench serve --config inference/config_cpu.yaml --model tesseract --ocr-all
+# layout: line → mỗi dòng chữ thành một khối có khung (nút "Hiện khung bố cục" trên web); paragraph = theo đoạn (thô hơn).
+# pictures: true → thêm khối Picture (con dấu, vân tay, chữ ký, tem; xem ocrbench/pictures.py), DOCX cắt thành ảnh.
+# Chất lượng kém dots.mocr nhiều (không phân loại tiêu đề / bảng); chỉ để thử giao diện.
+# dataset/output_dir không dùng khi demo (chỉ để config hợp lệ).
+dataset: inference/khong_dung.jsonl
+output_dir: inference_runs
+models:
+- name: tesseract
+  adapter: tesseract
+  params: {lang: ara+eng, psm: 3, layout: line, pictures: true}
