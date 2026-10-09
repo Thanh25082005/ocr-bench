@@ -20,7 +20,7 @@ from .docx_export import _add_markdown, _add_runs, _bidi_from_image, _set_bidi, 
 
 _HEADING_LEVEL = {"Title": 1, "Section-header": 2}
 _LABEL_COLOR = {"Title": (0xDC, 0x26, 0x26), "Section-header": (0x08, 0x91, 0xB2), "Table": (0x93, 0x33, 0xEA),
-                "Picture": (0xD9, 0x77, 0x06), "Formula": (0xDB, 0x27, 0x77)}
+                "Picture": (0xD9, 0x77, 0x06), "Signature": (0xB4, 0x53, 0x09), "Formula": (0xDB, 0x27, 0x77)}
 _DEFAULT_COLOR = (0x16, 0xA3, 0x4A)
 _LABEL_W, _CONTENT_W = Cm(3.5), Cm(13.0)  # A4 dọc, lề mặc định ~16.5 cm bề rộng chữ
 
@@ -95,7 +95,7 @@ def _add_picture(cell, block: dict, image) -> bool:
 def _fill(cell, block: dict, image, cache: dict, blocks: list) -> None:
     category = block.get("category") or "Text"
     text = block.get("text") or ""
-    if category == "Picture" or (not text.strip() and category != "Table"):
+    if category in ("Picture", "Signature") or (not text.strip() and category != "Table"):
         bbox = block.get("bbox")
         if not (image is not None and bbox and len(bbox) == 4 and _add_picture(cell, block, image)):
             cell.paragraphs[0].add_run("(ảnh — không cắt được từ trang)")

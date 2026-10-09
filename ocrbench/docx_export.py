@@ -285,7 +285,7 @@ def _setup_styles(doc) -> None:
         fonts.set(qn(attr), "Arial")  # w:cs = font cho chữ Ả Rập (complex script)
 
 
-_IMAGE_CATEGORIES = {"Picture", "Formula"}
+_IMAGE_CATEGORIES = {"Picture", "Signature", "Formula"}
 
 
 def _picture_groups(blocks: list) -> list:

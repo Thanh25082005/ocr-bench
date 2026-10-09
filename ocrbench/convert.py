@@ -258,7 +258,8 @@ class Converter:
                     from .layout import Block, draw_blocks
 
                     res.layout_image = Path(out_dir) / f"{path.stem}_trang{res.index}_bocuc.jpg"
-                    draw_blocks(images[k], [Block(b["category"], "", b.get("bbox")) for b in res.blocks]).save(
+                    draw_blocks(images[k], [Block(b["category"], "", b.get("bbox"), b.get("polygon"))
+                                             for b in res.blocks]).save(
                         res.layout_image, quality=85)
                 slots[k] = res
             done += len(part)
@@ -317,6 +318,8 @@ def _page_result(n: int, pred, seconds: float) -> PageResult:
         notes.append("bị cắt do quá thời gian cho phép mỗi trang")
     if pred.extra.get("truncated_repaired"):
         notes.append("khối cuối bị cắt dở, đã bỏ phần lặp và giữ phần đọc được")
+    if pred.extra.get("copied_cells"):
+        notes.append(f"{pred.extra['copied_cells']} khối nghi bị chép chữ / số từ khối khác (chữ viết tay khó đọc)")
     if pred.extra.get("layout") == "repaired":
         notes.append("JSON bố cục bị hỏng, đã nhặt lại các khối đọc được")
     elif pred.extra.get("layout") == "failed":

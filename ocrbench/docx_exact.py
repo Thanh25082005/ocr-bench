@@ -40,7 +40,7 @@ _FONT_FILES = ["/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
 _FONT_BOLD = ["/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
               "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
               "/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf", "C:/Windows/Fonts/arialbd.ttf"]
-IMAGE_CATEGORIES = {"Picture", "Formula"}
+IMAGE_CATEGORIES = {"Picture", "Signature", "Formula"}
 HEADING_CATEGORIES = {"Title", "Section-header"}
 
 

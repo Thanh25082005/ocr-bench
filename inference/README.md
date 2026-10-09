@@ -28,6 +28,25 @@ Từ máy mình mở web qua SSH: `ssh -L 7860:localhost:7860 kaggle-ngrok` → 
 Tùy chọn: `GPUS=1` (chỉ dùng GPU 1, khi GPU 0 đang chạy benchmark) · `PORT=7861` · `SKIP_CHECK=1` ·
 `SHARE=1` (link công khai `*.gradio.live` — **chỉ dùng với tài liệu mẫu**, không dùng với tài liệu thật).
 
+## Chạy không cần GPU: bố cục kraken (`config_cpu.yaml`)
+
+Hợp với giấy tờ cũ, chữ viết tay Ả Rập. Ba lớp (chi tiết: `ocrbench/adapters/kraken_layout.py`):
+1. **kraken** tách dòng (model `blla`, huấn luyện cho tài liệu lịch sử / viết tay, đọc phải→trái) → khung đa giác
+   từng dòng theo thứ tự đọc. Ảnh thật viết tay: 41 dòng, phủ cả khối nhân chứng / chỗ ký (Tesseract: 24, bỏ sót).
+2. **Signature** (model YOLOS) và **Picture** (con dấu, tem, logo, vân tay — `ocrbench/pictures.py`); dòng kraken
+   nằm trong chữ ký / con dấu bị bỏ; dòng không có nét mực đậm (watermark báo) bị bỏ.
+3. **Tesseract** đọc chữ từng dòng (tạm thời — chữ viết tay đọc kém; model đọc tốt hơn chọn bằng
+   `experiments/real_docs_probe`).
+
+```bash
+pip install -e ".[app,tesseract,hf]" && apt-get install -y tesseract-ocr tesseract-ocr-ara   # hf: model chữ ký
+bash inference/setup_kraken.sh      # một lần: venv riêng cho kraken (kéo torch riêng, ~2–3 GB), tự kiểm tra
+ocrbench serve --config inference/config_cpu.yaml --model kraken --ocr-all
+```
+
+CPU 2 nhân: ~30–40 giây/trang (kraken ~25–30 giây). Venv: `/kaggle/working/venvs/kraken` hoặc `~/venvs/kraken`
+(đổi bằng `KRAKEN_VENV` khi cài, `OCRBENCH_KRAKEN_PYTHON` khi chạy). Có GPU: đặt `device: cuda`, `seg_height: 1800`.
+
 ## Trên web
 
 **Tab Chuyển đổi**: kéo thả file → *Chuyển* → ngay bên dưới là khung **xem song song**: trái là trang gốc,

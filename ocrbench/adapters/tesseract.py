@@ -10,10 +10,12 @@ class TesseractAdapter(Adapter):
     # layout: trả thêm extra.blocks = khung chữ Tesseract tìm được (giao diện web vẽ khung bố cục, như dots):
     #   "line" = mỗi dòng một khối · "paragraph" (hoặc true) = mỗi đoạn một khối (Tesseract hay gộp đoạn rất thô).
     #   Loại khối chữ luôn là "Text" (Tesseract không phân loại tiêu đề / bảng). Benchmark để False.
-    # pictures: cùng layout, tìm thêm khối "Picture" (con dấu, vân tay, chữ ký, tem — ocrbench/pictures.py, cần scipy);
+    # pictures: cùng layout, tìm thêm khối "Picture" (con dấu, vân tay, tem, logo — ocrbench/pictures.py, cần scipy);
     #   DOCX cắt các vùng này từ trang gốc thành ảnh.
+    # signatures: cùng pictures, dùng thêm model phát hiện chữ ký → khối "Signature" (true = model mặc định, hoặc
+    #   tên model trên Hugging Face; cần torch + transformers, CPU ~2,5 giây/trang). signature_threshold: điểm tối thiểu.
     defaults = {"lang": "ara+eng", "psm": 3, "config": "", "with_confidence": False, "layout": False,
-                "pictures": False}
+                "pictures": False, "signatures": False, "signature_threshold": 0.45}
 
     def load(self):
         import pytesseract
@@ -36,13 +38,18 @@ class TesseractAdapter(Adapter):
             if self.params["layout"]:
                 extra["blocks"] = text_blocks(data, by_line=self.params["layout"] == "line")
                 if self.params["pictures"]:
-                    from ..pictures import add_pictures, find_pictures
+                    from ..pictures import SIGNATURE_MODEL, add_pictures, combine, find_pictures, find_signatures
 
                     words = [([data["left"][i], data["top"][i], data["left"][i] + data["width"][i],
                                data["top"][i] + data["height"][i]], float(data["conf"][i]),
                               (data["block_num"][i], data["par_num"][i], data["line_num"][i]), w)
                              for i, w in enumerate(data["text"]) if (w or "").strip()]
-                    extra["blocks"] = add_pictures(extra["blocks"], find_pictures(image, words))
+                    sig = self.params["signatures"]
+                    sigs = None
+                    if sig:
+                        sigs = find_signatures(image, SIGNATURE_MODEL if sig is True else sig,
+                                               self.params["signature_threshold"])
+                    extra["blocks"] = add_pictures(extra["blocks"], combine(find_pictures(image, words), sigs))
         return Prediction(text, confidence=conf, extra=extra)
 
 

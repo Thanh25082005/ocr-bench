@@ -1,7 +1,12 @@
-# Web demo trên máy KHÔNG có GPU: Tesseract (CPU) thay cho dots.mocr.
-#   ocrbench serve --config inference/config_cpu.yaml --model tesseract --ocr-all
+# Web demo trên máy KHÔNG có GPU (thay cho dots.mocr). Hai model:
+#   kraken    (khuyên dùng) — kraken tách dòng (hợp chữ viết tay Ả Rập) + chữ ký / con dấu / vân tay + Tesseract đọc
+#             từng dòng. Cài một lần: bash inference/setup_kraken.sh. Xem ocrbench/adapters/kraken_layout.py.
+#             ocrbench serve --config inference/config_cpu.yaml --model kraken --ocr-all
+#   tesseract — Tesseract tự tách dòng (bỏ sót nhiều chữ viết tay), không cần cài thêm.
+#             ocrbench serve --config inference/config_cpu.yaml --model tesseract --ocr-all
 # layout: line → mỗi dòng chữ thành một khối có khung (nút "Hiện khung bố cục" trên web); paragraph = theo đoạn (thô hơn).
-# pictures: true → thêm khối Picture (con dấu, vân tay, chữ ký, tem; xem ocrbench/pictures.py), DOCX cắt thành ảnh.
+# pictures: true → thêm khối Picture (con dấu, vân tay, tem, logo; xem ocrbench/pictures.py), DOCX cắt thành ảnh.
+# signatures: true → model phát hiện chữ ký (YOLOS, CPU ~2,5 giây/trang, tải ~0,5 GB lần đầu) → khối Signature.
 # Chất lượng kém dots.mocr nhiều (không phân loại tiêu đề / bảng); chỉ để thử giao diện.
 # dataset/output_dir không dùng khi demo (chỉ để config hợp lệ).
 dataset: inference/khong_dung.jsonl
@@ -9,4 +14,8 @@ output_dir: inference_runs
 models:
 - name: tesseract
   adapter: tesseract
-  params: {lang: ara+eng, psm: 3, layout: line, pictures: true}
+  params: {lang: ara+eng, psm: 3, layout: line, pictures: true, signatures: true}
+- name: kraken
+  adapter: kraken_layout
+  # seg_height 1400: nhanh hơn ~40% so với 1800 của model trên CPU, số dòng gần như không đổi (GPU: để 1800)
+  params: {seg_height: 1400, recognizer: tesseract, lang: ara+eng, pictures: true, signatures: true}

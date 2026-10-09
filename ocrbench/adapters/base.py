@@ -102,6 +102,7 @@ def _extract_json_field(text: str, field_name: str) -> str:
 BUILTIN = {
     "dummy": "ocrbench.adapters.dummy:DummyAdapter",
     "tesseract": "ocrbench.adapters.tesseract:TesseractAdapter",
+    "kraken_layout": "ocrbench.adapters.kraken_layout:KrakenLayoutAdapter",
     "easyocr": "ocrbench.adapters.easyocr_adapter:EasyOCRAdapter",
     "paddleocr": "ocrbench.adapters.paddle:PaddleOCRAdapter",
     "paddleocr_vl": "ocrbench.adapters.paddle:PaddleOCRVLAdapter",

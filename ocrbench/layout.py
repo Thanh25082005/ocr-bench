@@ -49,11 +49,14 @@ class Block:
     category: str
     text: str
     bbox: list[int] | None = None  # toạ độ trên ảnh GỐC
+    polygon: list[list[int]] | None = None  # đường bao chính xác (vd. dòng kraken); None = dùng bbox
 
     def to_dict(self, with_text: bool = True) -> dict:
         d = asdict(self)
         if not with_text:
             d.pop("text")
+        if d["polygon"] is None:
+            d.pop("polygon")
         return d
 
 
@@ -156,7 +159,7 @@ def blocks_to_markdown(blocks: list[Block], drop: tuple[str, ...] = ()) -> str:
 
 
 COLORS = {"Title": (220, 38, 38), "Section-header": (8, 145, 178), "Text": (22, 163, 74), "List-item": (37, 99, 235),
-          "Table": (219, 39, 119), "Picture": (147, 51, 234), "Caption": (234, 88, 12), "Formula": (100, 116, 139),
+          "Table": (219, 39, 119), "Picture": (147, 51, 234), "Signature": (180, 83, 9), "Caption": (234, 88, 12), "Formula": (100, 116, 139),
           "Footnote": (101, 163, 13), "Page-header": (120, 113, 108), "Page-footer": (120, 113, 108)}
 
 
@@ -176,7 +179,10 @@ def draw_blocks(image, blocks: list[Block]):
         if not b.bbox:
             continue
         c = COLORS.get(b.category, (22, 163, 74))
-        d.rectangle(b.bbox, outline=c, width=width)
+        if b.polygon and len(b.polygon) >= 3:
+            d.polygon([tuple(p) for p in b.polygon], outline=c, width=width)
+        else:
+            d.rectangle(b.bbox, outline=c, width=width)
         label = f"{i} {b.category}"
         x, y = b.bbox[0], max(0, b.bbox[1] - size - 4)
         box = d.textbbox((x + 4, y), label, font=font)

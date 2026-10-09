@@ -27,7 +27,7 @@ SMALL_IMAGES_SAVING_GB = 1.5  # giảm ảnh xuống ~1600 px tiết kiệm kho�
 USABLE = 0.9  # chỉ dùng 90% VRAM trống, chừa chỗ cho phân mảnh bộ nhớ
 SPLIT_EFFICIENCY = 0.92  # chia 2 GPU không chia đều tuyệt đối
 
-LIGHT_ADAPTERS = {"dummy", "tesseract", "easyocr", "paddleocr", "paddleocr_vl", "surya"}
+LIGHT_ADAPTERS = {"dummy", "tesseract", "kraken_layout", "easyocr", "paddleocr", "paddleocr_vl", "surya"}
 EXTERNAL_ADAPTERS = {"openai_api", "command"}
 
 

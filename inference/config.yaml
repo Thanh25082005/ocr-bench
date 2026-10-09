@@ -23,6 +23,11 @@ models:
     loop_long_max_period: 256   # bắt cả dòng dài bị lặp (ảnh giấy tờ cũ: dòng Ả Rập ~100 token lặp tới hết token, ~25 phút)
     repair_truncated: true      # trang bị dừng giữa chừng: giữ khối cuối (bỏ phần lặp) thay vì mất cả khối
     max_time: 600               # tối đa 10 phút sinh mỗi trang: một trang hỏng không chặn hàng đợi của web quá lâu
+    # Form điền tay: dots có lúc sinh dãy khung cùng cột, cao bằng nhau, cách đều rồi CHÉP chữ / số giữa các dòng
+    # (ảnh thật: "1983 02081" ở 3 ô, "מר (ה) 3/7/1983" ở 3 ô). Bật: phóng to riêng vùng đó (2 MP) dựng lại bố cục →
+    # đọc đúng số căn cước / ngày, hết chép, +~65 giây CHỈ trên trang bị (trang thường không đổi). Khối vẫn lặp ≥ 3
+    # lần → ghi chú "cần soát". Đã thử và loại: repetition_penalty 1.05 (vẫn chép), 3,5 MP (lặp thật, mất nửa form).
+    zoom_repeats: true
     modes:
       Bố cục đầy đủ: {}
       Chỉ chữ:
