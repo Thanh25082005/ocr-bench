@@ -11,6 +11,13 @@ models:
     model_id: dots-studio/dots.mocr
     prompt_mode: prompt_layout_all_en
     fitz_preprocess: false
+    # ảnh nhỏ hơn 5 MP được phóng lên tới cỡ đó trước khi đưa vào dots (ảnh to hơn giữ nguyên). Ảnh WhatsApp
+    # 1031×1600 (1,65 MP) đọc ở cỡ gốc: lặp sau ~2.400 token, ra 2 khối, mất cả nửa dưới trang. Phóng lên 2,8–3,9 MP
+    # đã hết lặp (20–27 khối) nhưng khung form viết tay còn gộp dòng / đè chữ ký; 5 MP: 36 khối, khung khớp từng
+    # dòng. repetition_penalty 1.05 hay temperature 0.1 KHÔNG chữa được (vẫn lặp). Đừng tăng: 6,6 MP hết VRAM T4.
+    # Cả test_infer/: bảng 245×90 hết JSON hỏng + đọc đúng; trang PDF 200 DPI (3,6–4,2 MP) bị phóng nhẹ → chậm ~16%.
+    # Đừng đặt max_pixels = min_pixels: smart_resize làm tròn lên khi phóng → vượt max → bbox lệch ~1,5%.
+    min_pixels: 5000000
     max_new_tokens: 24000
     stop_on_loop: true
     loop_long_max_period: 256   # bắt cả dòng dài bị lặp (ảnh giấy tờ cũ: dòng Ả Rập ~100 token lặp tới hết token, ~25 phút)

@@ -14,6 +14,7 @@ Khác source (chỉ để chạy được trên Kaggle T4, không đổi phép t
 - nạp qua thư mục tên không dấu chấm (README của họ cũng yêu cầu vậy);
 - stop_on_loop (tùy chọn, mặc định bật): dừng sinh khi model lặp vòng — JSON dở dang vẫn qua OutputCleaner của họ;
 - strip_images: bỏ ảnh base64 mà layoutjson2md nhúng cho khối Picture khỏi văn bản để chấm điểm.
+- fix_bboxes: bbox ngược / ra ngoài ảnh được sắp lại + kẹp vào trang trước layoutjson2md (bản gốc crop lỗi → mất trang).
 - manual_embeds (mặc định bật): tự ghép embedding ảnh vào chuỗi đầu vào (đúng hàm prepare_inputs_embeds của họ)
   rồi sinh bằng phần ngôn ngữ Qwen2. Code generate của họ chỉ đưa ảnh vào khi `cache_position[0] == 0`
   — transformers mới không truyền cache_position nữa → model bị lỗi hoặc KHÔNG nhìn thấy ảnh (đọc ra chữ bịa).
@@ -58,6 +59,8 @@ class DotsAdapter(Adapter):
         "min_pixels": None,
         "max_pixels": None,
         "max_new_tokens": 24000,    # như _inference_with_hf của họ
+        # tham số sinh thêm, vd. {repetition_penalty: 1.05}; {} = greedy như source gốc (họ không đặt gì thêm)
+        "generation_kwargs": {},
         "no_page_hf": False,        # True = văn bản bỏ Page-header/Page-footer (file _nohf.md của họ)
         "strip_images": True,
         "stop_on_loop": True,
@@ -141,7 +144,7 @@ class DotsAdapter(Adapter):
         if p["adaptive_max_tokens"]:
             n_img = int((inputs["input_ids"] == self._model.config.image_token_id).sum())
             max_new = min(max_new, int(p["adaptive_max_tokens"]) * n_img + 512)
-        gen = {"max_new_tokens": max_new}
+        gen = {**p["generation_kwargs"], "max_new_tokens": max_new}
         if p["max_time"]:
             gen["max_time"] = float(p["max_time"])
         loop = None
@@ -302,6 +305,26 @@ class _LayoutLoopStop:
         return torch.tensor([self.stopped], device=input_ids.device)
 
 
+def fix_bboxes(cells: list, width: int, height: int) -> int:
+    """Bbox model trả về bị ngược (x2 < x1 / y2 < y1) hoặc thò ra ngoài ảnh → sắp lại + kẹp vào trang (sửa tại chỗ).
+    Không sửa thì layoutjson2md của họ crop khối Picture lỗi ValueError → mất cả trang. Trả về số khối đã sửa."""
+    n = 0
+    for c in cells:
+        b = c.get("bbox")
+        if not (isinstance(b, (list, tuple)) and len(b) == 4):
+            continue
+        x1, x2 = sorted(min(max(int(v), 0), width) for v in (b[0], b[2]))
+        y1, y2 = sorted(min(max(int(v), 0), height) for v in (b[1], b[3]))
+        if x2 == x1:
+            x1, x2 = (x1 - 1, x1) if x1 >= width else (x1, x1 + 1)
+        if y2 == y1:
+            y1, y2 = (y1 - 1, y1) if y1 >= height else (y1, y1 + 1)
+        if [x1, y1, x2, y2] != list(b):
+            c["bbox"] = [x1, y1, x2, y2]
+            n += 1
+    return n
+
+
 def postprocess_response(response, prompt_mode, origin_image, image, min_pixels, max_pixels, extra=None) -> dict:
     """Phần hậu xử lý của _parse_single_image, tách riêng để kiểm thử được không cần GPU."""
     _, _, _, layout_utils, fmt = dots_utils()
@@ -314,6 +337,9 @@ def postprocess_response(response, prompt_mode, origin_image, image, min_pixels,
             out.update(filtered=True, md=cells, md_nohf=cells)
             extra["layout"] = "filtered"
         else:
+            n_fixed = fix_bboxes(cells, *origin_image.size)
+            if n_fixed:
+                extra["bbox_fixed"] = n_fixed
             out["cells"] = cells
             extra["layout"] = "ok"
             extra["blocks"] = [{"category": c.get("category"), "bbox": c.get("bbox")} for c in cells]

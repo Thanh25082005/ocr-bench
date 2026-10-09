@@ -184,7 +184,7 @@ def cmd_dots_parse(a):
     params = {}
     if a.config and a.model:
         params = load_config(a.config).model(a.model).params
-    params = merge_params(params, _params(a.set))
+    params = merge_params(params, _params(a.set) or {})
     if a.no_fitz_preprocess:
         params["fitz_preprocess"] = False
     elif a.fitz_preprocess:

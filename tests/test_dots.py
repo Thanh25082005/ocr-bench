@@ -59,6 +59,22 @@ def test_postprocess_broken_json_uses_their_cleaner():
     assert "Invoice" in r["md"]
 
 
+def test_postprocess_inverted_picture_bbox_does_not_crash():
+    """Model trả khối Picture có y2 < y1 (gặp thật trên ảnh giấy tờ cũ): bản gốc crop lỗi ValueError → mất trang."""
+    origin = Image.new("RGB", (W, H), "white")
+    cells = [{"bbox": [100, 900, 400, 700], "category": "Picture"},
+             {"bbox": [IW - 50, 10, IW + 300, 60], "category": "Text", "text": "tràn mép phải"},
+             {"bbox": [100, 100, 600, 180], "category": "Text", "text": "bình thường"}]
+    r = postprocess_response(json.dumps(cells), "prompt_layout_all_en", origin, origin, None, None)
+    assert r["extra"]["layout"] == "ok" and r["extra"]["bbox_fixed"] == 2
+    for b in r["extra"]["blocks"]:
+        x1, y1, x2, y2 = b["bbox"]
+        assert 0 <= x1 < x2 <= W and 0 <= y1 < y2 <= H
+    assert r["extra"]["blocks"][2]["bbox"] == [int(v / (IW / W)) if i % 2 == 0 else int(v / (IH / H))
+                                               for i, v in enumerate([100, 100, 600, 180])]  # khối hợp lệ giữ nguyên
+    assert "data:image" in r["md"]
+
+
 def test_postprocess_text_mode_passthrough():
     origin = Image.new("RGB", (W, H), "white")
     r = postprocess_response("plain text", "prompt_ocr", origin, origin, None, None)
